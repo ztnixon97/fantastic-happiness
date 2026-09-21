@@ -15,6 +15,7 @@ from research.sources.offline import build_offline_registry, load_corpus
 from research.sources.openalex import OpenAlexSource
 from research.sources.registry import SourceRegistry, build_registry
 from research.sources.semantic_scholar import SemanticScholarSource
+from research.sources.social import BlueskySource, MastodonSource, YouTubeSource
 from research.sources.static import StaticAcademicSource, StaticWebSource
 from research.sources.web import (
     BraveSearchSource,
@@ -24,11 +25,13 @@ from research.sources.web import (
 
 __all__ = [
     "ArxivSource",
+    "BlueskySource",
     "BraveSearchSource",
     "CitationSource",
     "CrossrefSource",
     "DirectFetchSource",
     "GdeltNewsSource",
+    "MastodonSource",
     "HttpResponse",
     "NewsSearchSource",
     "OpenAlexSource",
@@ -44,5 +47,6 @@ __all__ = [
     "StaticAcademicSource",
     "StaticWebSource",
     "TavilySearchSource",
+    "YouTubeSource",
     "build_registry",
 ]

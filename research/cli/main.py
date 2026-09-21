@@ -366,6 +366,30 @@ async def cmd_stop(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_ui(context: CliContext, args: argparse.Namespace) -> int:
+    """Serve the read-only investigation UI until interrupted."""
+    import asyncio as _asyncio
+
+    from research.ui.server import serve
+
+    httpd = serve(context.store, host=args.host, port=args.port, config=context.config)
+    investigations = context.store.investigations.list(limit=1)
+    print(f"http://{args.host}:{args.port}")
+    if investigations:
+        print(f"showing {investigations[0].id}: {truncate(investigations[0].question, 60)}")
+    else:
+        print("no investigations yet; run 'research --offline investigate \"...\"' first")
+    print("read-only; ctrl-c to stop")
+    try:
+        await _asyncio.get_running_loop().run_in_executor(None, httpd.serve_forever)
+    except (KeyboardInterrupt, _asyncio.CancelledError):  # pragma: no cover - interactive
+        pass
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    return 0
+
+
 async def cmd_demo(context: CliContext, args: argparse.Namespace) -> int:
     """Run the worked example against the offline corpus.
 
@@ -981,6 +1005,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     timeline.add_argument("--limit", type=int, default=100)
     timeline.set_defaults(handler=cmd_timeline)
+
+    ui = subparsers.add_parser("ui", help="serve the read-only investigation UI")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.set_defaults(handler=cmd_ui)
 
     demo = subparsers.add_parser("demo", help="run the offline worked example")
     demo.set_defaults(handler=cmd_demo)

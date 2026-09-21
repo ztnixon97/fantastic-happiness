@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>Research</h1>
+  <select id="investigation-picker" aria-label="Investigation"></select>
+  <span id="status-line"></span>
+</header>
+
+<nav id="tabs">
+  <button data-view="overview" class="active">Overview</button>
+  <button data-view="tasks">Tasks</button>
+  <button data-view="claims">Claims</button>
+  <button data-view="graph">Graph</button>
+  <button data-view="entities">Entities</button>
+  <button data-view="timeline">Timeline</button>
+  <button data-view="sources">Sources</button>
+  <button data-view="questions">Open questions</button>
+  <button data-view="activity">Activity</button>
+</nav>
+
+<main id="content"></main>
+<aside id="detail" hidden>
+  <button id="detail-close" aria-label="Close">close</button>
+  <div id="detail-body"></div>
+</aside>
+
+<footer>
+  <span>Read-only view of stored investigation state. Retrieved content is
+  external material, rendered as text.</span>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

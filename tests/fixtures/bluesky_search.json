@@ -1,0 +1,39 @@
+{
+ "posts": [
+  {
+   "uri": "at://did:plc:abc123/app.bsky.feed.post/3kxyz",
+   "cid": "bafy",
+   "author": {
+    "did": "did:plc:abc123",
+    "handle": "utilityanalyst.bsky.social",
+    "displayName": "Utility Analyst"
+   },
+   "record": {
+    "text": "The SMR project cancellation shows subscription risk is the binding constraint, not the technology.",
+    "createdAt": "2023-11-09T14:02:00.000Z",
+    "langs": [
+     "en"
+    ]
+   },
+   "replyCount": 4,
+   "repostCount": 12,
+   "likeCount": 30,
+   "indexedAt": "2023-11-09T14:03:00.000Z"
+  },
+  {
+   "uri": "at://did:plc:def456/app.bsky.feed.post/3kabc",
+   "cid": "bafy2",
+   "author": {
+    "did": "did:plc:def456",
+    "handle": "energyreporter.bsky.social"
+   },
+   "record": {
+    "text": "Filing says target price rose to $89/MWh.",
+    "createdAt": "2023-11-08T20:00:00.000Z"
+   },
+   "replyCount": 0,
+   "repostCount": 1,
+   "likeCount": 5
+  }
+ ]
+}

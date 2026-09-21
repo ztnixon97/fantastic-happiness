@@ -341,3 +341,90 @@ class TestProviderFailures:
         hits = await OpenAlexSource(client).search(query())
         assert len(attempts) == 2
         assert hits
+
+
+class TestSocialSources:
+    """Public social material: attributed statements, not verification."""
+
+    async def test_bluesky_posts_carry_their_account(self) -> None:
+        from research.sources.social import BlueskySource
+
+        source = BlueskySource(
+            client_for({"searchPosts": json_fixture("bluesky_search.json")})
+        )
+        hits = await source.search(query("smr cancellation", families=[SourceFamily.SOCIAL]))
+        assert len(hits) == 2
+        first = hits[0]
+        assert first.source_type is SourceType.SOCIAL_POST
+        assert first.source_family is SourceFamily.SOCIAL
+        assert first.url == "https://bsky.app/profile/utilityanalyst.bsky.social/post/3kxyz"
+        assert first.raw["account_handle"] == "utilityanalyst.bsky.social"
+        assert first.raw["account_did"] == "did:plc:abc123"
+        assert first.published_at.date().isoformat() == "2023-11-09"
+
+    async def test_bluesky_needs_no_credential(self) -> None:
+        from research.sources.social import BlueskySource
+
+        assert BlueskySource(client_for({})).capabilities().requires_api_key is False
+
+    async def test_a_post_becomes_self_reported_evidence(self) -> None:
+        from research.graph.claims import SELF_REPORTED_TYPES
+        from research.sources.social import BlueskySource
+
+        source = BlueskySource(
+            client_for({"searchPosts": json_fixture("bluesky_search.json")})
+        )
+        hit = (await source.search(query("smr", families=[SourceFamily.SOCIAL])))[0]
+        document = await source.fetch(hit)
+        assert document.source_type in SELF_REPORTED_TYPES
+        assert "binding constraint" in document.text
+        assert document.metadata["account_handle"] == "utilityanalyst.bsky.social"
+
+    async def test_mastodon_reads_public_tag_timelines(self) -> None:
+        from research.sources.social import MastodonSource
+
+        requests: list[httpx.Request] = []
+        source = MastodonSource(
+            client_for({"/timelines/tag/": json_fixture("mastodon_tag.json")}, record=requests)
+        )
+        hits = await source.search(query("nuclear data centre agreements",
+                                         families=[SourceFamily.SOCIAL]))
+        assert "/api/v1/timelines/tag/agreements" in str(requests[0].url)
+        assert len(hits) == 1, "a boost is a copy, not a second source"
+        assert hits[0].raw["account_handle"] == "gridwatcher@mastodon.social"
+        # HTML post bodies are stripped by the same extractor the fetcher uses.
+        assert "<p>" not in hits[0].snippet
+        assert "broken ground" in hits[0].snippet
+
+    async def test_mastodon_honours_an_explicit_hashtag(self) -> None:
+        from research.sources.social import MastodonSource
+
+        requests: list[httpx.Request] = []
+        source = MastodonSource(
+            client_for({"/timelines/tag/": json_fixture("mastodon_tag.json")}, record=requests)
+        )
+        await source.search(
+            ResearchQuery(text="anything", filters={"hashtag": "#SMR"},
+                          families=[SourceFamily.SOCIAL])
+        )
+        assert "/timelines/tag/smr" in str(requests[0].url)
+
+    async def test_youtube_returns_video_records_and_says_so(self) -> None:
+        from research.sources.social import YouTubeSource
+
+        source = YouTubeSource(
+            client_for({"/search": json_fixture("youtube_search.json")}), api_key="k"
+        )
+        hits = await source.search(query("smr economics", families=[SourceFamily.VIDEO]))
+        assert hits[0].source_type is SourceType.VIDEO
+        assert hits[0].url == "https://www.youtube.com/watch?v=vid123"
+        assert hits[0].raw["transcript_available"] is False
+        assert source.capabilities().supports_full_text is False
+
+    async def test_youtube_without_a_key_says_what_is_missing(self) -> None:
+        from research.sources.social import YouTubeSource
+
+        source = YouTubeSource(client_for({}), api_key=None)
+        with pytest.raises(SourceNotConfigured) as exc:
+            await source.search(query("x", families=[SourceFamily.VIDEO]))
+        assert "RESEARCH_YOUTUBE_API_KEY" in str(exc.value)

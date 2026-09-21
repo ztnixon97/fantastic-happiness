@@ -26,7 +26,7 @@ research = "research.cli.main:main"
 include = ["research*"]
 
 [tool.setuptools.package-data]
-research = ["data/*.json"]
+research = ["data/*.json", "ui/assets/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,0 +1,31 @@
+[
+ {
+  "id": "111",
+  "created_at": "2025-02-19T12:00:00.000Z",
+  "url": "https://mastodon.social/@gridwatcher/111",
+  "content": "<p>Data centre operators signed <a href=\"https://mastodon.social/tags/nuclear\">#nuclear</a> PPAs, but none of the projects has broken ground.</p>",
+  "language": "en",
+  "reblogs_count": 3,
+  "favourites_count": 9,
+  "reblog": null,
+  "account": {
+   "acct": "gridwatcher",
+   "display_name": "Grid Watcher",
+   "url": "https://mastodon.social/@gridwatcher",
+   "bot": false
+  }
+ },
+ {
+  "id": "112",
+  "created_at": "2025-02-20T08:00:00.000Z",
+  "url": "https://mastodon.social/@someone/112",
+  "content": "<p>boosted</p>",
+  "reblog": {
+   "id": "111"
+  },
+  "account": {
+   "acct": "someone",
+   "display_name": "Someone"
+  }
+ }
+]

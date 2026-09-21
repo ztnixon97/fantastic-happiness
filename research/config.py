@@ -28,6 +28,8 @@ PROVIDER_KEY_ENV = {
     "semantic_scholar": "RESEARCH_SEMANTIC_SCHOLAR_API_KEY",
     "newsapi": "RESEARCH_NEWSAPI_API_KEY",
     "serper": "RESEARCH_SERPER_API_KEY",
+    "youtube": "RESEARCH_YOUTUBE_API_KEY",
+    "mastodon": "RESEARCH_MASTODON_TOKEN",
 }
 
 #: Contact address sent in User-Agent to academic APIs; they ask for one and

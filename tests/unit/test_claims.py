@@ -318,3 +318,48 @@ class TestStatusRules:
         from research.graph.claims import EvidenceSummary
 
         assert "no evidence" in explain(EvidenceSummary(), EvidenceSummary())
+
+
+class TestSocialEvidence:
+    """Social material is attributed, not corroborating."""
+
+    def test_a_claim_resting_only_on_posts_is_not_supported(self, workspace) -> None:
+        _, _, operations, add = workspace
+        post = add(
+            "Account says the deal is signed",
+            "The agreement was signed last week, I am told by someone in the room.",
+            source_type=SourceType.SOCIAL_POST,
+            family=SourceFamily.SOCIAL,
+            metadata={"account_handle": "insider.bsky.social"},
+        )
+        claim = operations.create_claim("The agreement was signed")
+        operations.link_evidence(claim.id, post.id, EvidenceStance.SUPPORTS)
+        assessment = operations.get_claim(claim.id)
+        assert assessment.status is ClaimStatus.INSUFFICIENT_EVIDENCE
+        assert "not that it holds" in assessment.explanation
+
+    def test_a_post_alongside_a_record_is_a_different_matter(self, workspace) -> None:
+        _, _, operations, add = workspace
+        post = add(
+            "Account says the deal is signed",
+            "The agreement was signed last week, I am told by someone in the room.",
+            source_type=SourceType.SOCIAL_POST,
+            family=SourceFamily.SOCIAL,
+        )
+        filing = add(
+            "Annual report",
+            "The company entered into a power purchase agreement during the period.",
+            source_type=SourceType.CORPORATE_FILING,
+            family=SourceFamily.CORPORATE,
+        )
+        claim = operations.create_claim("A power purchase agreement was entered into")
+        operations.link_evidence(claim.id, post.id, EvidenceStance.SUPPORTS)
+        operations.link_evidence(
+            claim.id,
+            filing.id,
+            EvidenceStance.SUPPORTS,
+            excerpt="entered into a power purchase agreement",
+        )
+        assessment = operations.get_claim(claim.id)
+        assert assessment.status is ClaimStatus.SUPPORTED
+        assert assessment.support.has_primary_source

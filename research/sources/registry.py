@@ -28,6 +28,7 @@ from research.sources.http import SafeHttpClient
 from research.sources.news import GdeltNewsSource, NewsSearchSource
 from research.sources.openalex import OpenAlexSource
 from research.sources.semantic_scholar import SemanticScholarSource
+from research.sources.social import BlueskySource, MastodonSource, YouTubeSource
 from research.sources.web import (
     BraveSearchSource,
     SerperSearchSource,
@@ -164,6 +165,27 @@ def build_registry(
         )
         registry.register(web_source)
         registry.register(NewsSearchSource(web_source))
+
+    # Public social sources. Keyless ones are always available; YouTube is
+    # skipped without a key, like any other keyed provider.
+    if config.is_enabled("bluesky"):
+        registry.register(BlueskySource(client, base_url=config.provider("bluesky").base_url))
+    if config.is_enabled("mastodon"):
+        registry.register(
+            MastodonSource(
+                client,
+                base_url=config.provider("mastodon").base_url,
+                api_key=config.secret("mastodon"),
+            )
+        )
+    if config.is_enabled("youtube") and config.secret("youtube"):
+        registry.register(
+            YouTubeSource(
+                client,
+                api_key=config.secret("youtube"),
+                base_url=config.provider("youtube").base_url,
+            )
+        )
 
     if config.is_enabled("fetch"):
         fetcher = DirectFetchSource(
