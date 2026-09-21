@@ -22,7 +22,7 @@ from typing import Any, Iterator
 
 from research.errors import StorageError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -294,6 +294,32 @@ CREATE TABLE IF NOT EXISTS source_fetches (
 );
 CREATE INDEX IF NOT EXISTS idx_fetches_investigation
     ON source_fetches(investigation_id, created_at);
+
+-- Full-text index over held evidence. A separate table rather than an
+-- external-content one: the store is small, and keeping it standalone means
+-- a corrupt or missing index can be rebuilt from the documents table without
+-- touching either.
+CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+    document_id UNINDEXED,
+    investigation_id UNINDEXED,
+    title,
+    abstract,
+    body,
+    tokenize = 'porter unicode61'
+);
+
+-- Optional and off by default: vectors are only worth their cost once
+-- lexical retrieval is demonstrably failing.
+CREATE TABLE IF NOT EXISTS document_embeddings (
+    document_id      TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    investigation_id TEXT,
+    model            TEXT NOT NULL,
+    dimensions       INTEGER NOT NULL,
+    vector           BLOB NOT NULL,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_investigation
+    ON document_embeddings(investigation_id, model);
 
 CREATE TABLE IF NOT EXISTS budget_usage (
     investigation_id TEXT NOT NULL REFERENCES investigations(id) ON DELETE CASCADE,

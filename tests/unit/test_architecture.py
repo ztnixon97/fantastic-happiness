@@ -29,6 +29,7 @@ LAYERS = {
     "budgets": 3,
     "graph": 3,
     "acquisition": 4,
+    "retrieval": 4,
     "operations": 5,
     "agents": 6,
     "orchestration": 7,

@@ -155,11 +155,37 @@ class ModelSettings:
         return cls(**known)
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalSettings:
+    """Searching evidence the investigation already holds.
+
+    Lexical and graph retrieval are always on: they need no model, no
+    credential and no extra store. Vectors are opt-in because they are only
+    worth their cost once lexical retrieval is demonstrably failing.
+    """
+
+    embeddings_enabled: bool = False
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    embedding_base_url: str = "https://api.openai.com/v1"
+    #: Which credential the embedder uses, from the same allowlist.
+    embedding_provider: str = "openai"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RetrievalSettings":
+        known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
+        return cls(**known)
+
+
 @dataclass(slots=True)
 class ResearchConfig:
     budget: BudgetPolicy = field(default_factory=BudgetPolicy)
     acquisition: AcquisitionPolicy = field(default_factory=AcquisitionPolicy)
     model: ModelSettings = field(default_factory=ModelSettings)
+    retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
     providers: dict[str, ProviderSettings] = field(default_factory=dict)
     database_path: str | None = None
     contact_email: str | None = None
@@ -186,6 +212,7 @@ class ResearchConfig:
             "budget": self.budget.to_dict(),
             "acquisition": self.acquisition.to_dict(),
             "model": self.model.to_dict(),
+            "retrieval": self.retrieval.to_dict(),
             "providers": {
                 name: {
                     "enabled": settings.enabled,
@@ -243,6 +270,7 @@ def load_config(
     budget = BudgetPolicy.from_dict(research_block.get("budget", research_block))
     acquisition = AcquisitionPolicy.from_dict(data.get("acquisition", {}))
     model = ModelSettings.from_dict(data.get("model", {}))
+    retrieval = RetrievalSettings.from_dict(data.get("retrieval", {}))
 
     providers: dict[str, ProviderSettings] = {}
     for name, raw in (data.get("providers") or {}).items():
@@ -275,6 +303,7 @@ def load_config(
         budget=budget,
         acquisition=acquisition,
         model=model,
+        retrieval=retrieval,
         providers=providers,
         database_path=data.get("database_path"),
         contact_email=contact,

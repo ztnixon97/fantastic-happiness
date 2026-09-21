@@ -39,6 +39,7 @@ from research.operations.counterevidence import CounterevidenceSearch
 from research.operations.primary_source import PrimarySourceChase
 from research.operations.search import SearchOperation
 from research.operations.timeline import TimelineOperations
+from research.retrieval.search import CorpusSearch
 from research.budgets import BudgetLedger, Resource
 from research.sources.registry import SourceRegistry
 from research.storage.store import ResearchStore
@@ -140,6 +141,7 @@ class ActionRuntime:
         investigation_id: str,
         task: ResearchTask,
         ledger: BudgetLedger,
+        corpus: CorpusSearch | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -163,6 +165,10 @@ class ActionRuntime:
         self.primary_source = PrimarySourceChase(
             store, registry, self.search, investigation_id=investigation_id, task_id=task.id
         )
+        #: Retrieval over held evidence. Lexical and graph only by default: a
+        #: worker should not need an embedding provider - or its credentials -
+        #: to ask what the investigation already has.
+        self.corpus = corpus or CorpusSearch(store, investigation_id)
         self.counterevidence = CounterevidenceSearch(
             store,
             self.search,
@@ -271,6 +277,43 @@ class ActionRuntime:
         self, spec: ActionSpec, arguments: dict[str, Any]
     ) -> Observation:
         return await self._search(SourceFamily.SOCIAL, arguments, spec.name)
+
+    async def _do_search_corpus(self, spec: ActionSpec, arguments: dict[str, Any]) -> Observation:
+        query = str(arguments["query"])
+        limit = _int(arguments.get("limit"), default=10, maximum=25)
+        expand = arguments.get("expand") is not False
+        hits = await self.corpus.search(query, limit=limit, expand=expand)
+        held = self.store.documents.count(self.investigation_id)
+        results = []
+        for hit in hits:
+            entry = document_brief(hit.document)
+            if hit.reasons:
+                entry["why"] = hit.reasons[:3]
+            if hit.snippet:
+                entry["matched_text"] = truncate(hit.snippet, 240)
+            if hit.copies:
+                entry["copies_folded_in"] = len(hit.copies)
+            results.append(entry)
+        return Observation(
+            action=spec.name,
+            ok=True,
+            data={
+                "query": query,
+                "held_documents": held,
+                "matched": len(hits),
+                "results": results,
+                **(
+                    {}
+                    if hits
+                    else {
+                        "note": (
+                            "nothing held matches; this is the moment to search "
+                            "outside, not to rephrase"
+                        )
+                    }
+                ),
+            },
+        )
 
     async def _do_fetch_source(self, spec: ActionSpec, arguments: dict[str, Any]) -> Observation:
         result = await self.search.fetch_source(str(arguments["url"]), family=SourceFamily.WEB)

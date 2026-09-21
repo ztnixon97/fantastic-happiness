@@ -81,7 +81,8 @@ async def act(runtime: ActionRuntime, action: str, **arguments):
 class TestActionSurface:
     def test_the_vocabulary_is_the_one_research_needs(self) -> None:
         assert set(ACTIONS) == {
-            "search_news", "search_academic", "search_web", "search_social", "fetch_source",
+            "search_news", "search_academic", "search_web", "search_social",
+            "search_corpus", "fetch_source",
             "follow_citations", "find_primary_source", "find_counterevidence",
             "resolve_entity", "build_timeline", "create_claim", "link_evidence",
             "get_claim", "get_evidence", "get_open_questions",
@@ -221,6 +222,47 @@ class TestGraphActions:
         )
         assert again.data["entity_id"] == first.data["entity_id"]
         assert again.data["confidence"] == "heuristic"
+
+
+class TestCorpusAction:
+    """Workers can ask what the investigation already holds."""
+
+    async def test_it_finds_evidence_another_search_gathered(self, runtime) -> None:
+        await act(runtime, "search_academic", query="reactor cost")
+        observation = await act(runtime, "search_corpus", query="levelized cost projections")
+        assert observation.ok
+        assert observation.data["held_documents"] == 2
+        assert observation.data["results"][0]["id"] == "evidence:1"
+
+    async def test_it_spends_no_budget(self, runtime) -> None:
+        # Wall-clock is excluded: it is spent by existing, not by searching.
+        spendable = [
+            resource for resource in Resource if resource is not Resource.RUNTIME_SECONDS
+        ]
+        await act(runtime, "search_academic", query="reactor cost")
+        before = {resource: runtime.ledger.used(resource) for resource in spendable}
+        await act(runtime, "search_corpus", query="reactor cost")
+        assert {resource: runtime.ledger.used(resource) for resource in spendable} == before
+
+    async def test_it_returns_briefs_not_page_text(self, runtime) -> None:
+        await act(runtime, "search_academic", query="reactor cost")
+        observation = await act(runtime, "search_corpus", query="cost escalation")
+        rendered = json.dumps(observation.data)
+        assert "Realized costs exceeded initial estimates" not in rendered
+
+    async def test_an_empty_corpus_says_so_rather_than_failing(self, runtime) -> None:
+        observation = await act(runtime, "search_corpus", query="reactor cost")
+        assert observation.ok
+        assert observation.data["matched"] == 0
+        assert "search outside" in observation.data["note"]
+
+    async def test_every_gathering_role_can_use_it(self) -> None:
+        for role in (
+            ResearchRole.SCOUT, ResearchRole.ACADEMIC, ResearchRole.NEWS,
+            ResearchRole.PRIMARY_SOURCE, ResearchRole.SOCIAL, ResearchRole.SKEPTIC,
+            ResearchRole.SYNTHESIZER,
+        ):
+            assert "search_corpus" in {spec.name for spec in actions_for(role)}
 
 
 class TestDelegation:

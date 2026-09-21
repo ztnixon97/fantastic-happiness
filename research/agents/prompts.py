@@ -34,6 +34,9 @@ How to work:
   document is not independent.
 - Prefer the record to the account of it. A filing, dataset, transcript or
   paper beats an article describing one.
+- Look inside before looking outside. Other tasks have been gathering into
+  the same store; search_corpus reads it, costs nothing, and often answers
+  the question you were about to spend a provider call on.
 - Look for what would change your mind, not only for what agrees.
 - Report uncertainty as uncertainty. "Announced but not independently
   verified" is a finding; a confident guess is not.

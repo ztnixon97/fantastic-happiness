@@ -43,6 +43,26 @@ class CliContext:
             return offline_research_model()
         return build_model(self.config)
 
+    def corpus_search(self, investigation_id: str, *, embeddings: bool | None = None):
+        """Retrieval over held evidence, with vectors only if asked for."""
+        from research.retrieval.embeddings import EmbeddingIndex, OpenAICompatibleEmbedder
+        from research.retrieval.search import CorpusSearch
+
+        settings = self.config.retrieval
+        use_vectors = settings.embeddings_enabled if embeddings is None else embeddings
+        index = None
+        if use_vectors:
+            index = EmbeddingIndex(
+                self.store.db,
+                OpenAICompatibleEmbedder(
+                    settings.embedding_model,
+                    dimensions=settings.embedding_dimensions,
+                    api_key=self.config.secret(settings.embedding_provider),
+                    base_url=settings.embedding_base_url,
+                ),
+            )
+        return CorpusSearch(self.store, investigation_id, embeddings=index)
+
     def ledger(self, investigation_id: str) -> BudgetLedger:
         """Budget ledger for an investigation, using its stored policy.
 

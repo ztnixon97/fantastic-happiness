@@ -61,6 +61,27 @@ def _register(spec: ActionSpec) -> ActionSpec:
     return spec
 
 
+search_corpus = _register(
+    ActionSpec(
+        name="search_corpus",
+        description=(
+            "Search what this investigation already holds. Costs no provider call and "
+            "no budget, so run it before searching outside: the material may already "
+            "be here, gathered by another task. Matching is lexical over titles, "
+            "abstracts and body text, widened through the investigation's own citation "
+            "and claim graph, so it also surfaces documents that never contained your "
+            "words but sit next to ones that did. Copies of one story are folded into "
+            "a single result."
+        ),
+        parameters={
+            "query": "the words you expect the held material to contain",
+            "limit": "maximum results (default 10)",
+            "expand": "false to match text only, without graph expansion",
+        },
+        required=("query",),
+    )
+)
+
 search_news = _register(
     ActionSpec(
         name="search_news",

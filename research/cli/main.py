@@ -741,6 +741,67 @@ async def cmd_report(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_find(context: CliContext, args: argparse.Namespace) -> int:
+    """Search evidence the investigation already holds."""
+    search = context.corpus_search(
+        args.investigation, embeddings=True if args.embeddings else None
+    )
+    hits = await search.search(
+        args.query,
+        limit=args.limit,
+        expand=not args.no_expand,
+        collapse_copies=not args.include_copies,
+        mode="all" if args.all_terms else "any",
+    )
+    if args.json:
+        print(as_json([hit.to_dict() for hit in hits]))
+        return 0
+
+    stats = search.stats()
+    if not hits:
+        print(f"nothing held matches {args.query!r} ({stats['indexed']} documents indexed)")
+        return 0
+    print(f"{len(hits)} of {stats['indexed']} held documents match {args.query!r}\n")
+    for hit in hits:
+        document = hit.document
+        found = "+".join(sorted(hit.ranks))
+        print(f"{document.id:<12} [{found}] {truncate(document.title or '(untitled)', 62)}")
+        published = document.published_at.date().isoformat() if document.published_at else "-"
+        print(f"             {document.source_type} · "
+              f"{document.publisher or document.canonical_host or document.provider} · {published}")
+        for reason in hit.reasons[:2]:
+            print(f"             why: {reason}")
+        if hit.copies:
+            print(f"             folds in {len(hit.copies)} cop"
+                  f"{'y' if len(hit.copies) == 1 else 'ies'}: {', '.join(hit.copies)}")
+        if hit.snippet:
+            print(f"             \u201c{truncate(hit.snippet, 150)}\u201d")
+        print()
+    return 0
+
+
+async def cmd_index(context: CliContext, args: argparse.Namespace) -> int:
+    """Rebuild the retrieval indexes for an investigation."""
+    search = context.corpus_search(
+        args.investigation, embeddings=True if args.embeddings else None
+    )
+    indexed = search.rebuild_index()
+    print(f"full-text index: {indexed} documents")
+    if args.embeddings:
+        if search.embeddings is None:
+            print("embeddings are not configured", file=sys.stderr)
+            return 1
+        documents = context.store.documents.list(args.investigation, limit=2000)
+        try:
+            written = await search.embeddings.index(documents)
+        except ResearchError as exc:
+            print(f"embedding failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"embeddings: {written} documents vectorised")
+    print(as_json(search.stats()))
+    return 0
+
+
 async def cmd_export(context: CliContext, args: argparse.Namespace) -> int:
     """Write an investigation into an Obsidian vault."""
     from research.export.obsidian import ObsidianExporter
@@ -974,6 +1035,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="assemble the report without asking a model for prose",
     )
     report.set_defaults(handler=cmd_report)
+
+    find = subparsers.add_parser(
+        "find", help="search evidence this investigation already holds"
+    )
+    find.add_argument("investigation")
+    find.add_argument("query")
+    find.add_argument("--limit", type=int, default=8)
+    find.add_argument(
+        "--no-expand", action="store_true", dest="no_expand",
+        help="lexical matching only, without expanding through the graph",
+    )
+    find.add_argument(
+        "--include-copies", action="store_true", dest="include_copies",
+        help="list syndicated copies as separate results",
+    )
+    find.add_argument(
+        "--all-terms", action="store_true", dest="all_terms",
+        help="require every term rather than ranking by overlap",
+    )
+    find.add_argument(
+        "--embeddings", action="store_true",
+        help="also rank by vector similarity (needs an embedding provider)",
+    )
+    find.set_defaults(handler=cmd_find)
+
+    index = subparsers.add_parser("index", help="rebuild retrieval indexes")
+    index.add_argument("investigation")
+    index.add_argument(
+        "--embeddings", action="store_true", help="also compute document vectors"
+    )
+    index.set_defaults(handler=cmd_index)
 
     export = subparsers.add_parser("export", help="export an investigation to other tools")
     export_targets = export.add_subparsers(dest="export_command", required=True)

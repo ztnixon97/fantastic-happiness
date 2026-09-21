@@ -18,6 +18,7 @@ from research.models.task import ResearchTask, TaskResult, TaskStatus
 from research.normalize.fingerprint import simhash_bands
 from research.normalize.urls import url_identity_key
 from research.storage.database import Database, encode_dt, to_json
+from research.storage.fts import index_document
 from research.storage.rows import (
     document_to_params,
     row_to_document,
@@ -255,6 +256,9 @@ class DocumentRepository:
         return document
 
     def _index(self, conn: Any, document: EvidenceDocument) -> None:
+        # Full-text index first: written in the same transaction as the row
+        # it describes, so the two cannot fall out of step.
+        index_document(conn, document)
         conn.executemany(
             "INSERT OR IGNORE INTO document_identities"
             "(document_id, investigation_id, scheme, value) VALUES(?,?,?,?)",
