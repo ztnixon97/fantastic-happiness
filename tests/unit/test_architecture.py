@@ -21,14 +21,19 @@ LAYERS = {
     "models": 0,
     "config": 1,
     "normalize": 1,
+    "llm": 2,
     "sources": 2,
     "storage": 2,
+    # Budgets keep durable counters, so they sit above storage - and below
+    # everything that spends, which is nearly everything.
+    "budgets": 3,
     "graph": 3,
-    "orchestration": 3,
     "acquisition": 4,
     "operations": 5,
-    "synthesis": 6,
-    "cli": 7,
+    "agents": 6,
+    "orchestration": 7,
+    "synthesis": 8,
+    "cli": 9,
 }
 
 

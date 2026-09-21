@@ -14,7 +14,7 @@ from research.models.common import SourceFamily
 from research.models.query import ResearchQuery, SearchHit
 from research.operations.citation_chase import CitationChase
 from research.operations.search import SearchOperation
-from research.orchestration.budgets import BudgetLedger, Resource
+from research.budgets import BudgetLedger, Resource
 from research.sources.base import SourceAdapter, SourceCapabilities
 from research.sources.fetcher import DirectFetchSource
 from research.sources.http import SafeHttpClient

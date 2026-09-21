@@ -232,3 +232,97 @@ class TestClaimsAndGraph:
         assert all(entry["independent_sources"] == 1 for entry in entries)
         grouped = [entry for entry in entries if len(entry["evidence"]) > 1]
         assert grouped, "the syndicated copy shares an entry with its original"
+
+
+class TestAutonomousRun:
+    """The Milestone 5-6 surface: plan, work, recurse, stop."""
+
+    @pytest.fixture
+    def investigated(self, db, capsys) -> str:
+        assert run(
+            db, "--offline", "investigate",
+            "Are small modular reactors competitive for AI data centres?",
+            "--max-tasks", "3", "--steps", "5",
+        ) == 0
+        capsys.readouterr()
+        return db
+
+    def test_an_investigation_plans_works_and_stops(self, db, capsys) -> None:
+        assert run(
+            db, "--offline", "investigate", "Are SMRs competitive for data centres?",
+            "--max-tasks", "3", "--steps", "5",
+        ) == 0
+        output = capsys.readouterr().out
+        assert "plan:" in output
+        assert "academic:" in output
+        assert "stopped:" in output
+        assert "independent sources" in output
+
+    def test_the_run_is_reported_as_structured_data(self, db, capsys) -> None:
+        assert run(
+            db, "--offline", "--json", "investigate", "Are SMRs competitive?",
+            "--max-tasks", "2", "--steps", "4",
+        ) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["tasks_run"] == 2
+        assert payload["stop_reason"]
+        assert payload["tasks"][0]["role"]
+
+    def test_the_task_tree_records_who_spawned_what(self, investigated, capsys) -> None:
+        assert run(investigated, "--json", "tasks", "investigation:1") == 0
+        tasks = json.loads(capsys.readouterr().out)
+        assert tasks
+        assert all(task["status"] in {"completed", "failed", "skipped", "pending"} for task in tasks)
+        assert any(task["summary"] for task in tasks)
+
+    def test_status_explains_where_the_run_stands(self, investigated, capsys) -> None:
+        assert run(investigated, "--json", "status", "investigation:1") == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["stop_reason"]
+        assert payload["documents"] > 0
+        assert payload["independent_sources"] <= payload["documents"]
+        assert set(payload["stopping_rules"]) == {
+            "budget", "runtime", "open_tasks", "diminishing_returns", "evidence"
+        }
+
+    def test_claims_made_autonomously_are_inspectable(self, investigated, capsys) -> None:
+        assert run(investigated, "--json", "claim", "list", "investigation:1") == 0
+        claims = json.loads(capsys.readouterr().out)
+        assert claims
+        assert all(claim["explanation"] for claim in claims)
+
+    def test_a_missing_credential_is_reported_not_worked_around(self, db, capsys) -> None:
+        # Without --offline and without a configured key, the run declines to
+        # start rather than silently choosing another model.
+        assert run(db, "investigate", "a question") == 1
+        assert "no model available" in capsys.readouterr().err
+
+
+class TestReportCommand:
+    def test_a_report_is_written_from_the_record(self, db, capsys) -> None:
+        assert run(
+            db, "--offline", "investigate", "Are SMRs competitive for data centres?",
+            "--max-tasks", "3", "--steps", "5",
+        ) == 0
+        capsys.readouterr()
+        assert run(db, "report", "investigation:1", "--no-summary") == 0
+        report = capsys.readouterr().out
+        assert "## Key findings" in report
+        assert "## Sources" in report
+        assert "independent sources" in report
+
+    def test_the_report_can_be_written_to_a_file(self, db, tmp_path, capsys) -> None:
+        run(db, "--offline", "investigate", "A question", "--max-tasks", "2", "--steps", "4")
+        capsys.readouterr()
+        destination = tmp_path / "report.md"
+        assert run(db, "report", "investigation:1", "--no-summary", "--output", str(destination)) == 0
+        assert destination.read_text().startswith("# ")
+
+    def test_report_data_is_available_as_json(self, db, capsys) -> None:
+        run(db, "--offline", "investigate", "A question", "--max-tasks", "2", "--steps", "4")
+        capsys.readouterr()
+        assert run(db, "--json", "report", "investigation:1", "--no-summary") == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["counts"]["independent_sources"] <= payload["counts"]["documents"]
+        assert payload["sources"]
+        assert all(source["provenance"] for source in payload["sources"])

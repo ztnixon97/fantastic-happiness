@@ -13,7 +13,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from typing import Sequence
+from pathlib import Path
+from typing import Any, Sequence
 
 from research import __version__
 from research.graph.independence import independent_documents
@@ -39,6 +40,9 @@ from research.normalize.text import truncate
 from research.operations.citation_chase import CitationChase
 from research.operations.claims import ClaimOperations
 from research.operations.timeline import TimelineOperations
+from research.orchestration.scheduler import Scheduler
+from research.orchestration.stopping import StoppingRules
+from research.synthesis.synthesizer import Synthesizer
 from research.operations.search import SearchOperation
 
 FAMILY_CHOICES = {
@@ -591,6 +595,192 @@ async def cmd_timeline(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
+    """Plan and run an investigation autonomously, within its budget."""
+    if args.investigation:
+        investigation = context.store.investigations.get(args.investigation)
+    else:
+        if not args.question:
+            print("give a question, or --investigation to resume one", file=sys.stderr)
+            return 1
+        investigation = context.store.investigations.create(
+            args.question, budget=context.config.budget.to_dict(), tags=args.tag or []
+        )
+    ledger = context.ledger(investigation.id)
+
+    try:
+        model = context.model()
+    except ResearchError as exc:
+        print(f"no model available: {exc}", file=sys.stderr)
+        return 1
+
+    quiet = args.json
+    def report(event: str, payload: dict[str, Any]) -> None:
+        if quiet:
+            return
+        if event == "planned":
+            print(f"plan: {payload['brief']}")
+            for task in payload["tasks"]:
+                print(f"  [{task['task_id']}] {task['role']}: {task['objective']}")
+            for rejected in payload["rejected"]:
+                print(f"  (rejected: {rejected})")
+            print()
+        elif event == "task_started":
+            print(f"-> {payload['task']} {payload['role']}: {truncate(payload['objective'], 68)}")
+        elif event == "task_finished":
+            print(
+                f"   {payload['status']} in {payload['steps']} steps; "
+                f"{payload['evidence']} evidence, {payload['claims']} claims"
+                + (
+                    f"; stopped: {payload['stopped_by']}"
+                    if payload["stopped_by"] != "completed"
+                    else ""
+                )
+            )
+        elif event == "followups":
+            for child in payload["created"]:
+                print(f"   + {child['task_id']} {child['role']} (depth {child['depth']}): "
+                      f"{truncate(child['objective'], 56)}")
+        elif event == "stopped":
+            print(f"\nstopped: {payload['reason']} - {payload['detail']}")
+
+    scheduler = Scheduler(
+        context.store,
+        context.registry,
+        model,
+        investigation_id=investigation.id,
+        ledger=ledger,
+        max_steps_per_task=args.steps or context.config.model.max_steps_per_task,
+        on_event=report,
+    )
+    run = await scheduler.run(max_tasks=args.max_tasks, plan_size=args.plan_size)
+
+    if args.json:
+        print(as_json(run.summary()))
+        return 0
+
+    documents = context.store.documents.list(investigation.id, limit=1000)
+    groups = independent_documents(context.store.documents, [d.id for d in documents])
+    claims = context.store.claims.list(investigation.id, hydrate=False)
+    print(
+        f"\n{investigation.id}: {run.tasks_run} tasks, {len(documents)} documents from "
+        f"{len(groups)} independent sources, {len(claims)} claims"
+    )
+    print("Inspect it:")
+    print(f"  research claim list {investigation.id}")
+    print(f"  research questions {investigation.id}")
+    print(f"  research tasks {investigation.id}")
+    print(f"  research budget {investigation.id}")
+    return 0 if run.error is None else 1
+
+
+async def cmd_report(context: CliContext, args: argparse.Namespace) -> int:
+    """Write the report from stored state."""
+    investigation = context.store.investigations.get(args.investigation)
+    model = None
+    if not args.no_summary:
+        try:
+            model = context.model()
+        except ResearchError as exc:
+            print(f"(writing without a summary: {exc})", file=sys.stderr)
+
+    synthesis = await Synthesizer(
+        context.store, investigation_id=investigation.id, model=model
+    ).run()
+
+    if args.json:
+        print(as_json(synthesis.data.to_dict()))
+        return 0
+    if synthesis.invalid_references:
+        print(
+            "(the summary was discarded: it cited "
+            + ", ".join(synthesis.invalid_references)
+            + ", which do not exist in this investigation)",
+            file=sys.stderr,
+        )
+    if args.output:
+        path = Path(args.output).expanduser()
+        path.write_text(synthesis.markdown, encoding="utf-8")
+        print(f"wrote {path} ({len(synthesis.markdown)} characters)")
+        return 0
+    print(synthesis.markdown)
+    return 0
+
+
+async def cmd_tasks(context: CliContext, args: argparse.Namespace) -> int:
+    tasks = context.store.tasks.list(args.investigation, limit=args.limit)
+    if args.json:
+        print(as_json([
+            {
+                "id": task.id,
+                "parent": task.parent_task_id,
+                "role": str(task.role),
+                "operation": str(task.operation),
+                "status": str(task.status),
+                "depth": task.depth,
+                "objective": task.objective,
+                "summary": task.result.summary if task.result else None,
+            }
+            for task in tasks
+        ]))
+        return 0
+    rows = [
+        {
+            "id": task.id,
+            "role": str(task.role),
+            "status": str(task.status),
+            "depth": task.depth,
+            "parent": task.parent_task_id or "-",
+            "objective": truncate(task.objective, 52),
+        }
+        for task in tasks
+    ]
+    print(table(rows, ["id", "role", "status", "depth", "parent", "objective"]))
+    for task in tasks:
+        if task.result and task.result.summary:
+            print()
+            print(f"{task.id}: {truncate(task.result.summary, 200)}")
+    return 0
+
+
+async def cmd_status(context: CliContext, args: argparse.Namespace) -> int:
+    investigation = context.store.investigations.get(args.investigation)
+    ledger = context.ledger(investigation.id)
+    rules = StoppingRules(context.store, investigation.id, ledger)
+    documents = context.store.documents.list(investigation.id, limit=1000)
+    groups = independent_documents(context.store.documents, [d.id for d in documents])
+    payload = {
+        "investigation": investigation.id,
+        "question": investigation.question,
+        "status": str(investigation.status),
+        "stop_reason": str(investigation.stop_reason) if investigation.stop_reason else None,
+        "stop_detail": investigation.stop_detail,
+        "documents": len(documents),
+        "independent_sources": len(groups),
+        "claims": len(context.store.claims.list(investigation.id, hydrate=False)),
+        "tasks": context.store.tasks.count(investigation.id),
+        "stopping_rules": rules.describe(),
+    }
+    if args.json:
+        print(as_json(payload))
+        return 0
+    print(f"{investigation.id}  {investigation.question}")
+    stopped = (
+        f" ({payload['stop_reason']}: {payload['stop_detail']})"
+        if payload["stop_reason"]
+        else ""
+    )
+    print(f"status          {payload['status']}{stopped}")
+    print(f"evidence        {payload['documents']} documents, "
+          f"{payload['independent_sources']} independent sources")
+    print(f"claims          {payload['claims']}")
+    print(f"tasks           {payload['tasks']}")
+    print("stopping rules")
+    for name, value in payload["stopping_rules"].items():
+        print(f"  {name:<20} {value}")
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -686,6 +876,37 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--reason", default="operator_stopped")
     stop.add_argument("--detail")
     stop.set_defaults(handler=cmd_stop)
+
+    investigate = subparsers.add_parser(
+        "investigate", help="plan and run an investigation autonomously"
+    )
+    investigate.add_argument("question", nargs="?")
+    investigate.add_argument(
+        "--investigation", help="resume an existing investigation instead of starting one"
+    )
+    investigate.add_argument("--tag", action="append")
+    investigate.add_argument("--max-tasks", type=int, default=None, dest="max_tasks")
+    investigate.add_argument("--plan-size", type=int, default=4, dest="plan_size")
+    investigate.add_argument("--steps", type=int, default=None, help="steps per task")
+    investigate.set_defaults(handler=cmd_investigate)
+
+    report = subparsers.add_parser("report", help="write the report from stored state")
+    report.add_argument("investigation")
+    report.add_argument("--output", help="write to a file instead of stdout")
+    report.add_argument(
+        "--no-summary", action="store_true", dest="no_summary",
+        help="assemble the report without asking a model for prose",
+    )
+    report.set_defaults(handler=cmd_report)
+
+    tasks = subparsers.add_parser("tasks", help="the research task tree")
+    tasks.add_argument("investigation")
+    tasks.add_argument("--limit", type=int, default=50)
+    tasks.set_defaults(handler=cmd_tasks)
+
+    status = subparsers.add_parser("status", help="where an investigation stands")
+    status.add_argument("investigation")
+    status.set_defaults(handler=cmd_status)
 
     claim = subparsers.add_parser("claim", help="state, link and inspect claims")
     claim_actions = claim.add_subparsers(dest="claim_command", required=True)

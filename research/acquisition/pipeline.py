@@ -15,7 +15,7 @@ from research.normalize.document import enrich
 from research.errors import BudgetExceeded
 from research.models.common import DuplicateRelation
 from research.models.evidence import EvidenceDocument
-from research.orchestration.budgets import BudgetLedger
+from research.budgets import BudgetLedger
 from research.storage.store import ResearchStore
 
 #: Relations where the incoming copy is the *same artifact* already held: the

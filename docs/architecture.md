@@ -6,12 +6,16 @@
 research/
   models/         domain objects; no I/O, no provider knowledge
   normalize/      deterministic: URLs, DOIs, text, fingerprints, HTML, document assembly
+  budgets.py      durable resource counters; everything charges against them
+  llm/            provider-agnostic model access
   storage/        SQLite schema, repositories, one store facade
   sources/        provider adapters behind one interface + the registry
+  graph/          read-only views: citations, claims, entities, timelines, independence
   acquisition/    deduplicate -> charge budget -> persist; untrusted-content handling
-  graph/          read-only views over stored citations
-  orchestration/  budgets (planner and stopping rules land here)
   operations/     research verbs composed from the layers above
+  agents/         the action vocabulary, the worker loop, the planner
+  orchestration/  the scheduler and the stopping rules
+  synthesis/      the report, assembled from stored state
   cli/            inspection and execution surface
 ```
 
@@ -132,6 +136,86 @@ are kept — that a wire story reached nine outlets is a fact about its spread
 
 Where the evidence is ambiguous the answer is "not independent", because the
 failure that matters is counting one source several times.
+
+## The autonomous loop
+
+```
+question
+   |
+   v
+Planner ── validates and stores 3-6 tasks (unknown roles and empty objectives dropped)
+   |
+   v
+Scheduler ── takes the highest-priority pending task, checks the stopping rules
+   |
+   v
+Worker (one role) ── loop, at most N steps:
+   |    model emits one JSON action -> runtime validates it -> operation runs
+   |    -> compact observation (identifiers, counts, one-line briefs)
+   |
+   +-> spawn_research_task  ── a child task, depth + 1
+   +-> complete_research_task ── summary, claim ids, evidence ids, follow-ups
+   |
+   v
+Scheduler ── turns follow-ups into tasks, re-checks the stopping rules, repeats
+   |
+   v
+Synthesizer ── writes the report from stored state; introduces no facts
+```
+
+The worker loop is a JSON action protocol rather than any vendor's
+function-calling format. That is deliberate: the same agent code runs against
+a model with no tool-calling support, including a local one, and the parser
+tolerates the fences and preamble models wrap JSON in.
+
+### What a worker can and cannot do
+
+`agents/actions.py` holds the closed vocabulary: sixteen research-native
+actions, each declaring its parameters and the roles allowed to use it. A
+news worker cannot walk a citation graph; a skeptic cannot plan. There is no
+action that executes anything, and `tests/unit/test_agents.py` asserts it.
+
+`agents/runtime.py` is the boundary. Every action passes through it, and it
+validates identifier syntax before use, refuses actions outside the role,
+executes through the ordinary operations the CLI also calls, and returns a
+*compact* observation — identifiers, counts, one-line briefs. Search results
+never arrive as text, so a page cannot address the model simply by being
+found. A worker reads a document only by asking for it, and gets it back
+wrapped as labelled external evidence.
+
+### Bounding recursion
+
+Three limits, because any one alone fails:
+
+* **Depth** — `spawn_research_task` refuses beyond `max_depth`.
+* **Task budget** — every task, planned or spawned, charges `Resource.TASKS`.
+* **Duplicate objectives** — the planner refuses an objective that matches one
+  already planned. Without this, a skeptic recommends a skeptic and the run
+  fills its budget with the same question asked five ways.
+
+### Stopping
+
+`orchestration/stopping.py` evaluates rules in order of authority: budget
+exhausted, runtime exhausted, no open tasks, diminishing returns, evidence
+sufficient. Two independent diminishing-returns signals are checked
+separately, because they occur apart: a corpus that has become mostly copies,
+and a run of searches that returned nothing. Whichever fires is written to
+`investigations.stop_reason` with its detail, so the question "why did it stop
+there?" has an answer months later.
+
+## Synthesis
+
+`synthesis/report.py` assembles the report from the record: claims with their
+assessments, one entry per independent source with its copies named, the
+timeline, the open questions, the stopping reason. `synthesis/synthesizer.py`
+asks a model for the executive summary only — and checks it, rejecting a
+summary that cites claim or evidence identifiers the investigation does not
+hold. A report whose prose cannot be traced is worse than a report with a
+dull summary, so the dull summary is the fallback.
+
+The synthesizer is given the record, not the corpus, and has no search
+actions. A synthesis step that quietly gathers more evidence produces a
+report nobody can trace.
 
 ## Claims: status without a score
 

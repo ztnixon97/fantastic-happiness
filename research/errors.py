@@ -52,6 +52,19 @@ class IntegrityError(ResearchError):
     """
 
 
+class ModelError(ResearchError):
+    """A language model call failed."""
+
+    def __init__(self, message: str, *, provider: str = "model", retryable: bool = False) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.retryable = retryable
+
+
+class ModelOutputError(ModelError):
+    """The model replied, but not in a form the caller can use."""
+
+
 class UnsafeRequest(ResearchError):
     """Raised when an outbound request violates the acquisition safety policy."""
 

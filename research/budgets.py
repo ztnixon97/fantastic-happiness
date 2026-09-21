@@ -1,5 +1,10 @@
 """Research budgets.
 
+This sits beside :mod:`research.config` rather than inside the orchestration
+package because every layer charges against it - acquisition, operations,
+workers and the scheduler alike - and none of them should have to depend on
+the code that decides what runs next in order to do so.
+
 Budgets are durable counters, not in-process ones: an investigation resumed
 tomorrow continues spending the same allowance it started with. Every
 expenditure goes through :class:`BudgetLedger`, so 'why did this stop?' has

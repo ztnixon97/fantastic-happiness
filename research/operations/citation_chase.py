@@ -16,7 +16,7 @@ from research.errors import SourceError
 from research.graph.citations import hit_from_document
 from research.models.common import RetrievalMethod, SourceFamily
 from research.models.query import SearchHit
-from research.orchestration.budgets import BudgetLedger, Resource
+from research.budgets import BudgetLedger, Resource
 from research.sources.base import CitationSource, ResearchSource
 from research.sources.registry import SourceRegistry
 from research.storage.store import ResearchStore

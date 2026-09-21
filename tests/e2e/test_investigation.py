@@ -16,7 +16,7 @@ from research.models.common import DuplicateRelation, SourceFamily, SourceType
 from research.models.investigation import InvestigationStatus, StopReason
 from research.operations.citation_chase import CitationChase
 from research.operations.search import SearchOperation
-from research.orchestration.budgets import BudgetLedger, Resource
+from research.budgets import BudgetLedger, Resource
 from research.sources.offline import build_offline_registry, load_corpus
 from research.storage.store import ResearchStore
 

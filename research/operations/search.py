@@ -19,7 +19,7 @@ from research.acquisition.pipeline import AcquisitionResult, EvidenceAcquirer, s
 from research.errors import BudgetExceeded, SourceError
 from research.models.common import RetrievalMethod, SourceFamily
 from research.models.query import ResearchQuery, SearchHit
-from research.orchestration.budgets import BudgetLedger, Resource
+from research.budgets import BudgetLedger, Resource
 from research.sources.base import ResearchSource
 from research.sources.registry import SourceRegistry
 from research.storage.store import ResearchStore

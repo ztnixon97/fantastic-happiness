@@ -201,6 +201,14 @@ def document_from_page(
     same underlying article.
     """
     canonical = canonicalize_url(page.canonical_url) or canonicalize_url(url)
+
+    # When a page declares a canonical URL on another host, it is republishing
+    # someone else's article. Its own site name is then the republisher's, not
+    # the publisher's, so it must not be recorded as the source of the piece.
+    publisher = page.site_name
+    if canonical and url_host(canonical) != url_host(url):
+        publisher = None
+
     document = build_document(
         provider=provider,
         source_type=source_type,
@@ -212,10 +220,11 @@ def document_from_page(
         url=canonical,
         authors=list(page.authors),
         published_at=page.published_at,
-        publisher=page.site_name,
+        publisher=publisher,
         language=page.language,
         metadata={
             "requested_url": url,
+            **({"republished_by": page.site_name} if publisher is None and page.site_name else {}),
             "declared_canonical_url": page.canonical_url,
             "outbound_links": page.links[:50],
         },

@@ -21,6 +21,8 @@ from research.errors import ConfigError
 #: Only these environment variables are ever read for provider credentials.
 #: A provider adapter receives its own key and nothing else.
 PROVIDER_KEY_ENV = {
+    "anthropic": "RESEARCH_ANTHROPIC_API_KEY",
+    "openai": "RESEARCH_OPENAI_API_KEY",
     "brave": "RESEARCH_BRAVE_API_KEY",
     "tavily": "RESEARCH_TAVILY_API_KEY",
     "semantic_scholar": "RESEARCH_SEMANTIC_SCHOLAR_API_KEY",
@@ -116,10 +118,36 @@ class ProviderSettings:
     options: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelSettings:
+    """Which model conducts the reasoning, and how far it may go.
+
+    ``provider`` selects an adapter, not a vendor lock: ``openai`` here means
+    an OpenAI-compatible endpoint, which a local server also provides.
+    """
+
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-5"
+    base_url: str | None = None
+    max_tokens: int = 4096
+    temperature: float = 0.0
+    #: Steps a single research worker may take before it must return.
+    max_steps_per_task: int = 8
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelSettings":
+        known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
+        return cls(**known)
+
+
 @dataclass(slots=True)
 class ResearchConfig:
     budget: BudgetPolicy = field(default_factory=BudgetPolicy)
     acquisition: AcquisitionPolicy = field(default_factory=AcquisitionPolicy)
+    model: ModelSettings = field(default_factory=ModelSettings)
     providers: dict[str, ProviderSettings] = field(default_factory=dict)
     database_path: str | None = None
     contact_email: str | None = None
@@ -145,6 +173,7 @@ class ResearchConfig:
         return {
             "budget": self.budget.to_dict(),
             "acquisition": self.acquisition.to_dict(),
+            "model": self.model.to_dict(),
             "providers": {
                 name: {
                     "enabled": settings.enabled,
@@ -201,6 +230,7 @@ def load_config(
     research_block = data.get("research", data)
     budget = BudgetPolicy.from_dict(research_block.get("budget", research_block))
     acquisition = AcquisitionPolicy.from_dict(data.get("acquisition", {}))
+    model = ModelSettings.from_dict(data.get("model", {}))
 
     providers: dict[str, ProviderSettings] = {}
     for name, raw in (data.get("providers") or {}).items():
@@ -232,6 +262,7 @@ def load_config(
     return ResearchConfig(
         budget=budget,
         acquisition=acquisition,
+        model=model,
         providers=providers,
         database_path=data.get("database_path"),
         contact_email=contact,

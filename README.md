@@ -7,11 +7,11 @@ investigations, evidence, claims and provenance, with a constrained set of
 research operations over it. Models supply semantic judgement. Storage,
 identity, deduplication, budgets and provenance are ordinary code.
 
-Milestones 1–4 are implemented: the evidence foundation, the academic and
-web/news vertical slices, and the claim/entity/event graph on top of them,
-plus a CLI that can gather, normalise, persist and inspect a mixed corpus and
-turn it into an argument. The planner, recursive follow-up and synthesis are
-designed for but not yet built — see [Status](#status).
+Milestones 1–7 are implemented: the evidence foundation, the academic and
+web/news slices, the claim/entity/event graph, the planner and specialised
+research workers, bounded recursion with explicit stopping criteria, and a
+report assembled from stored state. A UI and public social sources are not
+built — see [Status](#status).
 
 ## Try it
 
@@ -21,7 +21,11 @@ network.
 ```bash
 python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
-.venv/bin/research demo                     # a full investigation, offline
+# An autonomous investigation: plan, work, recurse, stop. No network, no keys.
+.venv/bin/research --offline investigate "Are small modular reactors competitive for AI data centres?"
+.venv/bin/research report investigation:1 --no-summary
+
+.venv/bin/research demo                     # the same corpus, scripted rather than planned
 .venv/bin/research show evidence:9          # where did this come from?
 .venv/bin/research independence investigation:1
 .venv/bin/research claim new investigation:1 "SMR costs have risen above projections"
@@ -34,9 +38,26 @@ python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/research budget investigation:1
 ```
 
-`demo` searches academic, news and web sources, follows a citation graph in
-both directions, deduplicates, and leaves an investigation on disk. A sample
-of its output:
+`investigate` plans the work, runs specialised workers over the bundled
+corpus, turns their follow-ups into new tasks within the depth and budget
+limits, and stops for a recorded reason:
+
+```
+plan: Establish what the literature, the recent record and primary sources say…
+  [task:1] academic: establish what peer-reviewed work says about …
+  [task:2] news: establish what has recently been reported about …
+  [task:3] primary_source: reach the underlying records behind reports about …
+  [task:4] skeptic: find evidence that contradicts the emerging picture on …
+
+-> task:1 academic: establish what peer-reviewed work says about small modular…
+   completed in 6 steps; 6 evidence, 1 claims
+   + task:5 skeptic (depth 2): test the claim behind: establish what peer-review…
+…
+stopped: no_open_tasks - every planned task has run and none proposed further work
+```
+
+`demo` runs the same corpus through a fixed script instead of a planner, and
+leaves an investigation on disk. A sample of its output:
 
 ```
 13 documents held; 11 independent sources
@@ -151,6 +172,22 @@ before it starts, and records which one stopped it. A cited work that has not
 been fetched is stored as an unresolved edge — the frontier is visible
 without spending anything to look at it.
 
+**Autonomy with limits.** A planner decomposes the question into tasks;
+specialised workers — scout, academic, news, primary-source, social, skeptic —
+each get the slice of the action vocabulary their role needs, and a worker
+that finds a lead worth its own work delegates it. Recursion is bounded three
+ways: by depth, by the task budget, and by refusing objectives that repeat
+work already planned. Without the third, workers recommend each other in
+circles.
+
+Workers act by emitting one JSON action per turn — `search_academic`,
+`follow_citations`, `find_primary_source`, `find_counterevidence`,
+`create_claim`, `link_evidence`, `get_evidence`, `spawn_research_task`,
+`complete_research_task` and the rest. That vocabulary is closed: there is no
+action that runs a command, reads a file, or reaches an address the
+acquisition layer did not sanction. A worker returns identifiers and a
+summary; retrieved text stays in the store.
+
 **Claims.** A claim is a proposition; evidence is attached to it with a
 stance, and the status follows from what is attached rather than from what a
 worker believes:
@@ -187,6 +224,19 @@ resolve to candidates rather than a merge; a match made on a name like
 "J. Smith" is flagged for review rather than quietly trusted. Events need at
 least one evidence document, and a dated event must state its precision, so a
 timeline never implies certainty it does not have.
+
+**Stopping on purpose.** An investigation ends because a rule fired, and the
+rule is recorded: budget or runtime exhausted, no open tasks, diminishing
+returns (a corpus that has become mostly copies, or a run of searches
+returning nothing), or evidence sufficient (every claim evidenced with no
+outstanding gaps). `research status` shows what each rule currently sees.
+
+**Reports from the record.** The report is assembled from stored state —
+claims with their assessments, evidence with its provenance, the timeline,
+the open questions, the stopping reason. A model may write the executive
+summary; it cannot introduce a fact, and a summary citing identifiers that do
+not exist is discarded rather than published. Every heading the brief asks
+for is there, and every finding carries the claim and evidence ids behind it.
 
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
@@ -229,6 +279,12 @@ budget applies.
 
 ```yaml
 # research.yaml
+model:
+  # 'openai' means any OpenAI-compatible endpoint, including a local server.
+  provider: anthropic
+  model: claude-sonnet-5
+  max_steps_per_task: 8
+
 research:
   budget:
     max_depth: 4
@@ -252,6 +308,7 @@ providers:
 ```
 
 ```bash
+export RESEARCH_ANTHROPIC_API_KEY=...           # or RESEARCH_OPENAI_API_KEY
 export RESEARCH_CONTACT_EMAIL=you@example.org   # polite pool at OpenAlex/Crossref
 export RESEARCH_BRAVE_API_KEY=...               # optional web search
 export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
@@ -261,16 +318,19 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 335 tests, no network, ~10s
+.venv/bin/python -m pytest          # 440 tests, no network, ~14s
 ```
 
-Providers are exercised through recorded payloads served by a mock
-transport. The suite covers normalisation, URL and DOI handling,
-deduplication and syndication, claim assessment and excerpt verification,
-entity resolution and its refusals, evidence-backed timelines, citation
-traversal and its termination, budget enforcement, provider outage and
-partial failure, SSRF and prompt-injection defences, resuming an
-investigation, and the CLI end to end.
+Providers and models alike are exercised through recorded payloads served by
+a mock transport, and the autonomous path runs against a rule-based model
+that needs no credential. The suite covers normalisation, URL and DOI
+handling, deduplication and syndication, claim assessment and excerpt
+verification, entity resolution and its refusals, evidence-backed timelines,
+citation traversal and its termination, the action vocabulary's role
+restrictions, the worker loop and its failure modes, planner validation,
+bounded recursion, every stopping rule, report traceability, budget
+enforcement, provider outage and partial failure, SSRF and prompt-injection
+defences, resuming an investigation, and the CLI end to end.
 
 ## Status
 
@@ -280,12 +340,13 @@ investigation, and the CLI end to end.
 | 2. Academic vertical slice | done |
 | 3. Web/news vertical slice | done |
 | 4. Claims and provenance graph | done |
-| 5. Planner and specialised workers | roles, operations and task model defined; not wired to a model yet |
-| 6. Recursive follow-up | budgets, stopping signals and structured follow-ups in place; scheduler next |
-| 7. Synthesis | not started |
+| 5. Planner and specialised workers | done |
+| 6. Recursive follow-up | done |
+| 7. Synthesis | done |
 | 8. Investigation UI | deliberately not started |
 | 9. Public social sources | not started; the source interface is ready for them |
 
-The next step is Milestone 5: a provider-agnostic model interface and the
-specialised research roles — planner, scout, academic, news, primary-source
-and skeptic — driving the operations that already exist.
+The next step is Milestone 8, and only because the CLI pipeline now works: a
+task tree, claim/evidence graph, timeline and source browser over the same
+stored state. Milestone 9 (public social sources) needs no new architecture —
+the source interface is ready for it.

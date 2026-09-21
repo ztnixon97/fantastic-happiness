@@ -8,6 +8,7 @@ deterministic and fast.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,7 +16,7 @@ import httpx
 import pytest
 
 from research.config import AcquisitionPolicy, BudgetPolicy, ResearchConfig
-from research.orchestration.budgets import BudgetLedger
+from research.budgets import BudgetLedger
 from research.sources.http import SafeHttpClient
 from research.sources.offline import build_offline_registry, load_corpus
 from research.storage.store import ResearchStore
@@ -25,6 +26,18 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 def load_fixture(name: str) -> Any:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_environment(monkeypatch) -> None:
+    """No test sees the host's credentials.
+
+    A suite whose result depends on whether the developer happens to have an
+    API key exported is not a suite.
+    """
+    for name in list(os.environ):
+        if name.startswith("RESEARCH_"):
+            monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

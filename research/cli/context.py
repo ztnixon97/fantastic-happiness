@@ -11,8 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from research.agents.offline_model import offline_research_model
+from research.budgets import BudgetLedger
 from research.config import BudgetPolicy, ResearchConfig, load_config
-from research.orchestration.budgets import BudgetLedger
+from research.llm.base import ModelClient
+from research.llm.factory import build_model
 from research.sources.http import SafeHttpClient
 from research.sources.offline import build_offline_registry, load_corpus
 from research.sources.registry import SourceRegistry, build_registry
@@ -26,6 +29,17 @@ class CliContext:
     registry: SourceRegistry
     client: SafeHttpClient
     offline: bool = False
+
+    def model(self) -> ModelClient:
+        """The model this run reasons with.
+
+        Offline runs use the rule-based researcher, which needs no credential
+        and behaves deterministically. Everything else comes from
+        configuration; there is no silent fallback between vendors.
+        """
+        if self.offline:
+            return offline_research_model()
+        return build_model(self.config)
 
     def ledger(self, investigation_id: str) -> BudgetLedger:
         """Budget ledger for an investigation, using its stored policy.

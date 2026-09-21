@@ -7,7 +7,7 @@ import pytest
 from research.config import BudgetPolicy, load_config
 from research.errors import BudgetExceeded
 from research.models.common import SourceFamily
-from research.orchestration.budgets import BudgetLedger, Resource
+from research.budgets import BudgetLedger, Resource
 from research.storage.store import ResearchStore
 
 
