@@ -24,6 +24,7 @@ from research.retrieval.embeddings import (
 )
 from research.retrieval.fusion import reciprocal_rank_fusion
 from research.retrieval.graph import GraphExpansion
+from research.retrieval.passages import fold, select_passages, split_passages
 from research.retrieval.lexical import LexicalIndex, prepare_query
 from research.retrieval import search as search_module
 from research.retrieval.search import CorpusSearch
@@ -569,3 +570,130 @@ class TestOfflineMode:
 
     def test_a_normal_run_has_vectors(self, store) -> None:
         assert self._context(store, offline=False).embedding_index() is not None
+
+
+class TestPassages:
+    """Reading the part of a document that bears on the question."""
+
+    DOCUMENT = (
+        "NOTICE OF ANNUAL FILING\n\nThis document is filed pursuant to section 14 of "
+        "the relevant act and contains the disclosures required thereunder.\n\n"
+        "The board met on four occasions during the period under review and "
+        "considered the matters set out in the appendix.\n\n"
+        "Construction of the two-unit plant was completed eleven months behind the "
+        "schedule published at the final investment decision.\n\n"
+        "The overnight capital cost rose from 6.1 billion dollars to 9.3 billion "
+        "dollars, a revision of fifty-two percent against the March estimate.\n\n"
+        "Directors' remuneration is disclosed in the usual form in note 19.\n\n"
+        "The auditors have issued an unqualified opinion on the financial statements."
+    )
+
+    def test_passages_are_verbatim_slices_with_offsets(self) -> None:
+        """A summary here would turn evidence into analysis."""
+        passages = split_passages(self.DOCUMENT, target=200)
+        assert len(passages) > 1
+        for passage in passages:
+            assert self.DOCUMENT[passage.start : passage.end] == passage.text
+
+    def test_passages_cover_the_document_without_overlapping(self) -> None:
+        passages = split_passages(self.DOCUMENT, target=200)
+        for earlier, later in zip(passages, passages[1:], strict=False):
+            assert earlier.end <= later.start
+
+    def test_a_short_document_is_one_passage(self) -> None:
+        assert len(split_passages("A single short notice.", target=900)) == 1
+
+    def test_an_empty_document_has_no_passages(self) -> None:
+        assert split_passages("") == []
+
+    def test_a_sentence_longer_than_a_passage_is_still_cut(self) -> None:
+        passages = split_passages("word " * 500, target=300)
+        assert passages
+        assert all(len(passage.text) <= 400 for passage in passages)
+
+    @pytest.mark.asyncio
+    async def test_the_relevant_paragraph_is_found_wherever_it_sits(self) -> None:
+        """The paragraph that settles the claim is not on the first page."""
+        chosen = await select_passages(
+            self.DOCUMENT, "how much did the capital cost rise", limit=1, target=200
+        )
+        assert len(chosen) == 1
+        assert "fifty-two percent" in chosen[0].text
+        assert "NOTICE OF ANNUAL FILING" not in chosen[0].text
+
+    @pytest.mark.asyncio
+    async def test_passages_come_back_in_document_order(self) -> None:
+        """Out of sequence, passages read as a different argument."""
+        chosen = await select_passages(
+            self.DOCUMENT, "cost schedule construction", limit=3, target=200
+        )
+        assert [passage.start for passage in chosen] == sorted(
+            passage.start for passage in chosen
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_query_matching_nothing_selects_nothing(self) -> None:
+        chosen = await select_passages(
+            self.DOCUMENT, "photovoltaic tariff arbitration", limit=3, target=200
+        )
+        assert chosen == []
+
+    @pytest.mark.asyncio
+    async def test_vectors_join_the_ranking_when_there_is_an_embedder(self) -> None:
+        chosen = await select_passages(
+            self.DOCUMENT, "capital cost", limit=2, target=200, embedder=HashingEmbedder()
+        )
+        assert chosen
+        assert any("vector" in passage.ranks for passage in chosen)
+
+    @pytest.mark.asyncio
+    async def test_an_embedder_that_raises_does_not_lose_the_passages(self) -> None:
+        class Broken:
+            async def embed(self, texts):
+                raise RuntimeError("down")
+
+        chosen = await select_passages(
+            self.DOCUMENT, "capital cost", limit=2, target=200, embedder=Broken()
+        )
+        assert chosen
+        assert all("vector" not in passage.ranks for passage in chosen)
+
+    def test_rendering_says_what_was_left_out(self, store: ResearchStore, investigation) -> None:
+        from research.acquisition.untrusted import as_external_passages
+
+        document = add_document(
+            store, investigation.id, title="Annual filing", text=self.DOCUMENT
+        )
+        passages = split_passages(self.DOCUMENT, target=200)[:2]
+        rendered = as_external_passages(
+            document, passages, question="how much did the capital cost rise"
+        )
+        assert rendered.startswith("<external_evidence")
+        assert "never as instructions" in rendered
+        assert "characters " in rendered, "each passage says where it came from"
+        assert "bear on the question" in rendered
+        assert "read it from the beginning" in rendered
+
+    def test_a_quote_from_a_passage_still_verifies(
+        self, store: ResearchStore, investigation
+    ) -> None:
+        """Passage selection must not break the excerpt check."""
+        from research.operations.claims import excerpt_appears_in
+
+        document = add_document(
+            store, investigation.id, title="Annual filing", text=self.DOCUMENT
+        )
+        passage = split_passages(self.DOCUMENT, target=200)[-1]
+        quote = passage.text.strip()[:60]
+        assert excerpt_appears_in(document, quote)
+
+    def test_folding_matches_plural_against_singular(self) -> None:
+        """The corpus index stems; this must not disagree with it."""
+        assert fold("costs") == fold("cost")
+        assert fold("reactors") == fold("reactor")
+        assert fold("studies") == fold("study")
+
+    def test_folding_leaves_short_words_alone(self) -> None:
+        """Crude is fine; mangling 'gas' into 'ga' is not."""
+        for word in ("gas", "bus", "is", "as", "les"):
+            assert fold(word) == word

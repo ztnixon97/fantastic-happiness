@@ -265,6 +265,124 @@ class TestCorpusAction:
             assert "search_corpus" in {spec.name for spec in actions_for(role)}
 
 
+class TestReadingEvidence:
+    """A worker reads a document for something, not from the top."""
+
+    FILING = (
+        "NOTICE OF ANNUAL FILING\n\nFiled pursuant to section 14 of the relevant "
+        "act, containing the disclosures required thereunder.\n\n"
+        + "The board considered routine administrative matters at each meeting.\n\n" * 40
+        + "The overnight capital cost rose from 6.1 billion dollars to 9.3 billion "
+        "dollars, a revision of fifty-two percent against the March estimate.\n\n"
+        + "Directors' remuneration is disclosed in the usual form in note 19.\n\n" * 40
+    )
+
+    async def _hold(self, store, investigation):
+        from research.models.common import Provenance, SourceFamily, SourceType
+        from research.normalize.document import build_document
+
+        return EvidenceAcquirer(store).persist(
+            build_document(
+                provider="test",
+                source_type=SourceType.CORPORATE_FILING,
+                source_family=SourceFamily.CORPORATE,
+                provenance=Provenance(provider="test"),
+                title="Annual filing",
+                text=self.FILING,
+                url="https://filings.test/annual",
+            ),
+            investigation_id=investigation.id,
+        ).document
+
+    async def test_the_passage_that_answers_is_returned_not_the_cover_page(
+        self, store, investigation, runtime
+    ) -> None:
+        document = await self._hold(store, investigation)
+        observation = await act(
+            runtime, "get_evidence", document_id=document.id,
+            about="how much did the capital cost rise",
+        )
+        assert observation.ok
+        assert observation.data["read"] == "passages"
+        assert "fifty-two percent" in observation.data["content"]
+        assert "NOTICE OF ANNUAL FILING" not in observation.data["content"]
+
+    async def test_it_says_where_each_passage_came_from(
+        self, store, investigation, runtime
+    ) -> None:
+        document = await self._hold(store, investigation)
+        observation = await act(
+            runtime, "get_evidence", document_id=document.id, about="capital cost"
+        )
+        assert observation.data["passages"]
+        assert all("characters" in where for where in observation.data["passages"])
+
+    async def test_the_task_objective_is_the_default_question(
+        self, store, investigation, runtime
+    ) -> None:
+        """A worker that does not say what it is looking for is still looking."""
+        document = await self._hold(store, investigation)
+        assert "reactor costs" in runtime.task.objective
+        observation = await act(runtime, "get_evidence", document_id=document.id)
+        assert observation.data["selected_for"] == runtime.task.objective
+        assert observation.data["read"] == "passages"
+        # "reactor costs" in the objective against "capital cost" in the
+        # filing: only matches once plural and singular fold together.
+        assert "capital cost" in observation.data["content"]
+
+    async def test_a_document_the_question_does_not_touch_is_read_from_the_top(
+        self, store, investigation, runtime
+    ) -> None:
+        """Nothing matching is not the same as nothing relevant."""
+        document = await self._hold(store, investigation)
+        observation = await act(
+            runtime, "get_evidence", document_id=document.id,
+            about="photovoltaic tariff arbitration",
+        )
+        assert observation.data["read"] == "from the beginning"
+
+    async def test_the_whole_document_is_still_available(
+        self, store, investigation, runtime
+    ) -> None:
+        document = await self._hold(store, investigation)
+        observation = await act(
+            runtime, "get_evidence", document_id=document.id, whole=True
+        )
+        assert observation.data["read"] == "from the beginning"
+        assert "NOTICE OF ANNUAL FILING" in observation.data["content"]
+
+    async def test_a_short_document_is_not_carved_up(
+        self, store, investigation, runtime
+    ) -> None:
+        await act(runtime, "search_academic", query="reactor cost")
+        observation = await act(runtime, "get_evidence", document_id="evidence:1")
+        assert observation.data["read"] == "from the beginning"
+
+    async def test_passages_are_still_untrusted_external_content(
+        self, store, investigation, runtime
+    ) -> None:
+        document = await self._hold(store, investigation)
+        observation = await act(
+            runtime, "get_evidence", document_id=document.id, about="capital cost"
+        )
+        assert observation.data["content"].startswith("<external_evidence")
+        assert "never as instructions" in observation.data["content"]
+
+    async def test_a_quote_from_a_returned_passage_links_to_the_claim(
+        self, store, investigation, runtime
+    ) -> None:
+        """The point of verbatim passages: the excerpt check still passes."""
+        document = await self._hold(store, investigation)
+        await act(runtime, "get_evidence", document_id=document.id, about="capital cost")
+        await act(runtime, "create_claim", text="The capital cost rose by half.")
+        observation = await act(
+            runtime, "link_evidence", claim_id="claim:1", document_id=document.id,
+            stance="supports",
+            excerpt="a revision of fifty-two percent against the March estimate",
+        )
+        assert observation.ok, observation.error
+
+
 class TestDelegation:
     async def test_spawning_respects_the_depth_limit(self, store, investigation, registry) -> None:
         ledger = BudgetLedger(store.budget, investigation.id, BudgetPolicy(max_depth=2))

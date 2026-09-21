@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from research.acquisition.untrusted import as_external_evidence
+from research.acquisition.untrusted import as_external_evidence, as_external_passages
 from research.agents.actions import ACTIONS, ActionSpec
 from research.errors import BudgetExceeded, IntegrityError, NotFound, ResearchError
 from research.graph.entities import EntityRegistry
@@ -39,6 +39,8 @@ from research.operations.counterevidence import CounterevidenceSearch
 from research.operations.primary_source import PrimarySourceChase
 from research.operations.search import SearchOperation
 from research.operations.timeline import TimelineOperations
+from research.retrieval.passages import TARGET_CHARACTERS as PASSAGE_CHARACTERS
+from research.retrieval.passages import select_passages
 from research.retrieval.search import CorpusSearch
 from research.budgets import BudgetLedger, Resource
 from research.sources.registry import SourceRegistry
@@ -464,14 +466,43 @@ class ActionRuntime:
             default=DEFAULT_READ_CHARACTERS,
             maximum=MAX_READ_CHARACTERS,
         )
+        # A worker reading a document is reading it *for* something. When it
+        # does not say what, the task's own objective is the honest default -
+        # better than the first page, which is what a document has instead of
+        # an answer.
+        question = str(arguments.get("about") or "").strip() or self.task.objective
+        whole = bool(arguments.get("whole")) or not question
+
+        body = document.best_text or ""
+        passages: list[Any] = []
+        if not whole and len(body) > characters:
+            passages = await select_passages(
+                body,
+                question,
+                limit=max(2, characters // PASSAGE_CHARACTERS),
+                embedder=getattr(self.corpus.embeddings, "client", None),
+            )
+
+        if passages:
+            content = as_external_passages(document, passages, question=question)
+        else:
+            content = as_external_evidence(document, limit=characters)
+
         return Observation(
             action=spec.name,
             ok=True,
             data={
                 **document_brief(document),
+                "read": "passages" if passages else "from the beginning",
+                **({"selected_for": question} if passages else {}),
+                **(
+                    {"passages": [passage.locate() for passage in passages]}
+                    if passages
+                    else {}
+                ),
                 # Wrapped and labelled: the worker is told, in the payload
                 # itself, that this is external material to assess.
-                "content": as_external_evidence(document, limit=characters),
+                "content": content,
             },
         )
 
