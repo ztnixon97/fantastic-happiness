@@ -69,6 +69,7 @@ class ResearchWorker:
         ledger: BudgetLedger,
         max_steps: int = 8,
         embeddings: Any = None,
+        price: tuple[float, float] | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -77,6 +78,9 @@ class ResearchWorker:
         self.ledger = ledger
         self.max_steps = max_steps
         self.embeddings = embeddings
+        #: (input, output) per million tokens for this worker's model,
+        #: or None when the configuration has not priced it.
+        self.price = price
 
     async def run(self, task: ResearchTask) -> WorkerOutcome:
         investigation = self.store.investigations.get(self.investigation_id)
@@ -133,8 +137,7 @@ class ResearchWorker:
                 stopped_by = f"model client raised {type(exc).__name__}: {exc}"
                 break
 
-            self.ledger.try_spend(Resource.MODEL_CALLS)
-            self.ledger.try_spend(Resource.TOKENS, response.usage.total_tokens)
+            self.ledger.charge_model(response.usage, price=self.price)
             messages.append(Message(role="assistant", content=response.text))
 
             try:

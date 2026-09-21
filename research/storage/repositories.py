@@ -181,6 +181,25 @@ class TaskRepository:
         )
         return [row_to_task(row) for row in rows]
 
+    def claim_pending(self, investigation_id: str, *, limit: int = 1) -> list[ResearchTask]:
+        """Take up to ``limit`` pending tasks and mark them running.
+
+        Selection and marking happen together so that a concurrent batch
+        cannot hand the same task to two workers. Ordering is the same as
+        ``next_pending``: priority first, then creation order.
+        """
+        if limit <= 0:
+            return []
+        rows = self.db.query(
+            "SELECT * FROM research_tasks WHERE investigation_id = ? AND status = ? "
+            "ORDER BY priority ASC, created_at ASC, id ASC LIMIT ?",
+            (investigation_id, str(TaskStatus.PENDING), int(limit)),
+        )
+        tasks = [row_to_task(row) for row in rows]
+        for task in tasks:
+            self.mark_running(task.id)
+        return tasks
+
     def next_pending(self, investigation_id: str) -> ResearchTask | None:
         row = self.db.query_one(
             "SELECT * FROM research_tasks WHERE investigation_id = ? AND status = ? "

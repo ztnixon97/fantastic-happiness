@@ -11,15 +11,18 @@ to stop, and nothing else.
 
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
 from typing import Any
 
 from research.agents.planner import Plan, Planner
+from research.llm.factory import ModelPool
 from research.agents.worker import ResearchWorker, WorkerOutcome
 from research.errors import BudgetExceeded, ModelError
 from research.llm.base import ModelClient
 from research.models.investigation import InvestigationStatus, StopReason
-from research.models.task import ResearchTask, TaskStatus
+from research.models.task import ResearchRole, ResearchTask, TaskStatus
 from research.budgets import BudgetLedger
 from research.orchestration.stopping import StopDecision, StoppingRules
 from research.sources.registry import SourceRegistry
@@ -66,18 +69,28 @@ class Scheduler:
         max_steps_per_task: int = 8,
         on_event: Any = None,
         embeddings: Any = None,
+        models: ModelPool | None = None,
+        max_concurrent_tasks: int = 1,
     ) -> None:
         self.store = store
         self.registry = registry
-        self.model = model
         self.investigation_id = investigation_id
         self.ledger = ledger
         self.max_steps_per_task = max_steps_per_task
         #: Vector index for workers' own searches of held evidence, so a
         #: worker ranks its corpus the same way the CLI does.
         self.embeddings = embeddings
+        #: Models by role. A single client passed positionally becomes a
+        #: pool that answers with it for every role, which is what an
+        #: offline run and a scripted test want.
+        self.models = models or ModelPool(fixed=model)
+        self.max_concurrent_tasks = max(1, int(max_concurrent_tasks))
         self.planner = Planner(
-            store, model, investigation_id=investigation_id, ledger=ledger
+            store,
+            self.models.for_role(ResearchRole.PLANNER),
+            investigation_id=investigation_id,
+            ledger=ledger,
+            price=self.models.price_for(ResearchRole.PLANNER),
         )
         self.stopping = StoppingRules(store, investigation_id, ledger)
         #: Optional callback for progress output; the CLI passes a printer.
@@ -102,16 +115,6 @@ class Scheduler:
         self.store.investigations.set_status(
             self.investigation_id, InvestigationStatus.RUNNING
         )
-        worker = ResearchWorker(
-            self.store,
-            self.registry,
-            self.model,
-            investigation_id=self.investigation_id,
-            ledger=self.ledger,
-            max_steps=self.max_steps_per_task,
-            embeddings=self.embeddings,
-        )
-
         while True:
             decision = self.stopping.evaluate()
             if decision.should_stop:
@@ -123,33 +126,69 @@ class Scheduler:
                     detail=f"reached the requested limit of {max_tasks} tasks",
                 ))
 
-            task = self.store.tasks.next_pending(self.investigation_id)
-            if task is None:
+            room = self.max_concurrent_tasks
+            if max_tasks is not None:
+                room = min(room, max_tasks - run.tasks_run)
+            batch = self.store.tasks.claim_pending(self.investigation_id, limit=room)
+            if not batch:
                 return self._finish(run, StopDecision(
                     should_stop=True,
                     reason=StopReason.NO_OPEN_TASKS,
                     detail="no tasks remain",
                 ))
 
-            self.on_event("task_started", {"task": task.id, "role": str(task.role),
-                                           "objective": task.objective})
-            try:
-                outcome = await worker.run(task)
-            except BudgetExceeded as exc:
-                self.store.tasks.finish(task.id, TaskStatus.SKIPPED, error=str(exc))
-                return self._finish(run, StopDecision(
-                    should_stop=True, reason=StopReason.BUDGET_EXHAUSTED, detail=str(exc)
-                ))
-            except ModelError as exc:
-                self.store.tasks.finish(task.id, TaskStatus.FAILED, error=str(exc))
-                run.error = str(exc)
-                return self._finish(run, StopDecision(
-                    should_stop=True, reason=StopReason.ERROR, detail=str(exc)
-                ))
+            for task in batch:
+                self.on_event("task_started", {"task": task.id, "role": str(task.role),
+                                               "objective": task.objective})
+            results = await asyncio.gather(
+                *(self._run_task(task) for task in batch), return_exceptions=False
+            )
 
-            run.outcomes.append(outcome)
-            self.on_event("task_finished", outcome.summary())
-            self._ingest_followups(task, outcome)
+            stop: StopDecision | None = None
+            for task, (outcome, failure) in zip(batch, results, strict=True):
+                if outcome is not None:
+                    run.outcomes.append(outcome)
+                    self.on_event("task_finished", outcome.summary())
+                    self._ingest_followups(task, outcome)
+                elif failure is not None and stop is None:
+                    # The rest of the batch is still recorded before the run
+                    # ends: work that happened should not vanish because a
+                    # sibling task hit the budget.
+                    stop = failure
+                    if failure.reason is StopReason.ERROR:
+                        run.error = failure.detail
+            if stop is not None:
+                return self._finish(run, stop)
+
+
+    async def _run_task(
+        self, task: ResearchTask
+    ) -> tuple[WorkerOutcome | None, StopDecision | None]:
+        """Run one task. A failure that should end the run comes back as a
+        decision rather than an exception, so a concurrent batch can finish
+        recording the tasks that did succeed."""
+        worker = ResearchWorker(
+            self.store,
+            self.registry,
+            self.models.for_role(task.role),
+            investigation_id=self.investigation_id,
+            ledger=self.ledger,
+            max_steps=self.max_steps_per_task,
+            embeddings=self.embeddings,
+            price=self.models.price_for(task.role),
+        )
+        try:
+            return await worker.run(task), None
+        except BudgetExceeded as exc:
+            self.store.tasks.finish(task.id, TaskStatus.SKIPPED, error=str(exc))
+            return None, StopDecision(
+                should_stop=True, reason=StopReason.BUDGET_EXHAUSTED, detail=str(exc)
+            )
+        except ModelError as exc:
+            self.store.tasks.finish(task.id, TaskStatus.FAILED, error=str(exc))
+            return None, StopDecision(
+                should_stop=True, reason=StopReason.ERROR, detail=str(exc)
+            )
 
     def _ingest_followups(self, task: ResearchTask, outcome: WorkerOutcome) -> None:
         followups = outcome.result.recommended_followups

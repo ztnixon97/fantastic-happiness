@@ -33,6 +33,11 @@ class Resource(StrEnum):
     PROVIDER_CALLS = "provider_calls"
     MODEL_CALLS = "model_calls"
     TOKENS = "tokens"
+    INPUT_TOKENS = "input_tokens"
+    OUTPUT_TOKENS = "output_tokens"
+    #: Money, in whatever currency the configured prices are in. Counted
+    #: only for models the configuration has priced; see ModelSettings.prices.
+    COST = "cost"
     FAILED_SOURCE_CALLS = "failed_source_calls"
     RUNTIME_SECONDS = "runtime_seconds"
 
@@ -47,6 +52,7 @@ _LIMIT_FIELDS: dict[Resource, str] = {
     Resource.PROVIDER_CALLS: "max_provider_calls",
     Resource.MODEL_CALLS: "max_model_calls",
     Resource.TOKENS: "max_tokens",
+    Resource.COST: "max_cost",
     Resource.FAILED_SOURCE_CALLS: "max_failed_source_calls",
 }
 
@@ -95,7 +101,13 @@ class BudgetLedger:
     def limit(self, resource: Resource) -> float:
         if resource is Resource.RUNTIME_SECONDS:
             return float(self.policy.max_runtime_minutes * 60)
-        return float(getattr(self.policy, _LIMIT_FIELDS[resource]))
+        field = _LIMIT_FIELDS.get(resource)
+        if field is None:
+            # A counter with no ceiling. Input and output tokens are tracked
+            # so cost can be computed from them; the ceiling that matters is
+            # on their total, and on money.
+            return float("inf")
+        return float(getattr(self.policy, field))
 
     def used(self, resource: Resource) -> float:
         if resource is Resource.RUNTIME_SECONDS:
@@ -109,6 +121,27 @@ class BudgetLedger:
         return self._runtime_at_start + (self._clock() - self._started)
 
     # -- spending -------------------------------------------------------
+    def charge_model(self, usage: Any, *, price: tuple[float, float] | None = None) -> float:
+        """Record one model call: the call, its tokens, and its cost.
+
+        One place does all of it so the counters cannot disagree with each
+        other. ``price`` is (input, output) per million tokens, or None for a
+        model the configuration has not priced - in which case the tokens are
+        still counted and the money is not guessed at.
+        """
+        self.try_spend(Resource.MODEL_CALLS)
+        input_tokens = float(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = float(getattr(usage, "output_tokens", 0) or 0)
+        self.try_spend(Resource.TOKENS, input_tokens + output_tokens)
+        self.try_spend(Resource.INPUT_TOKENS, input_tokens)
+        self.try_spend(Resource.OUTPUT_TOKENS, output_tokens)
+        if price is None:
+            return 0.0
+        cost = (input_tokens * price[0] + output_tokens * price[1]) / 1_000_000
+        if cost:
+            self.try_spend(Resource.COST, cost)
+        return cost
+
     def can_spend(self, resource: Resource, amount: float = 1) -> bool:
         return self.used(resource) + amount <= self.limit(resource)
 

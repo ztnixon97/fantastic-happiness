@@ -43,6 +43,18 @@ class CliContext:
             return offline_research_model()
         return build_model(self.config)
 
+    def models(self):
+        """Models by role, so the planner need not share the gatherers' model.
+
+        An offline run pins every role to the deterministic local researcher:
+        tiers are about spending, and an offline run spends nothing.
+        """
+        from research.llm.factory import ModelPool
+
+        if self.offline:
+            return ModelPool(fixed=offline_research_model())
+        return ModelPool(self.config)
+
     def corpus_search(self, investigation_id: str, *, embeddings: bool | None = None):
         """Retrieval over held evidence: lexical, graph and vectors."""
         from research.retrieval.search import CorpusSearch

@@ -81,11 +81,13 @@ class Planner:
         *,
         investigation_id: str,
         ledger: BudgetLedger,
+        price: tuple[float, float] | None = None,
     ) -> None:
         self.store = store
         self.model = model
         self.investigation_id = investigation_id
         self.ledger = ledger
+        self.price = price
 
     async def plan(self, investigation: Investigation, *, max_tasks: int = 5) -> Plan:
         """Ask for a decomposition, validate it, and store the tasks."""
@@ -114,8 +116,7 @@ class Planner:
         except ModelError as exc:
             raise ModelError(f"the planner could not run: {exc}", provider="planner") from exc
 
-        self.ledger.try_spend(Resource.MODEL_CALLS)
-        self.ledger.try_spend(Resource.TOKENS, response.usage.total_tokens)
+        self.ledger.charge_model(response.usage, price=self.price)
 
         payload = extract_json(response.text)
         if not isinstance(payload, dict):

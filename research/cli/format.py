@@ -144,7 +144,11 @@ def budget_report(snapshot: dict[str, dict[str, float]]) -> str:
             "used": _number(values["used"]),
             "limit": _number(values["limit"]),
             "remaining": _number(values["remaining"]),
-            "spent": f"{(values['used'] / values['limit'] * 100):.0f}%" if values["limit"] else "-",
+            "spent": (
+                f"{(values['used'] / values['limit'] * 100):.0f}%"
+                if values["limit"] and values["limit"] != float("inf")
+                else "-"
+            ),
         }
         for resource, values in snapshot.items()
     ]
@@ -152,7 +156,14 @@ def budget_report(snapshot: dict[str, dict[str, float]]) -> str:
 
 
 def _number(value: float) -> str:
-    return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
+    value = float(value)
+    if value == float("inf"):
+        return "-"
+    if value and abs(value) < 0.01:
+        # Money: a tenth of a cent is still a number, and rounding it to
+        # 0.00 would read as free.
+        return f"{value:.4f}"
+    return str(int(value)) if value.is_integer() else f"{value:.2f}"
 
 
 def claim_detail(assessment: Any, *, links: Sequence[Any] = ()) -> str:

@@ -37,6 +37,7 @@ from research.models.event import DatePrecision
 from research.normalize.html import parse_date
 from research.acquisition.ingest import LocalIngest
 from research.normalize.docling_reader import available as docling_available
+from research.config import DEFAULT_ROLE_TIERS
 from research.models.common import SourceFamily, SourceType
 from research.models.investigation import InvestigationStatus, StopReason
 from research.normalize.text import truncate
@@ -332,6 +333,22 @@ async def cmd_budget(context: CliContext, args: argparse.Namespace) -> int:
         print(as_json(snapshot))
         return 0
     print(budget_report(snapshot))
+    called_a_model = bool(snapshot.get("model_calls", {}).get("used"))
+    if called_a_model and not snapshot.get("cost", {}).get("used"):
+        # Tokens without money means nothing priced the model. Say which
+        # one, rather than letting a zero read as free.
+        unpriced = sorted(
+            {
+                context.config.model.resolve(role).model
+                for role in (None, *DEFAULT_ROLE_TIERS)
+                if context.config.model.price(context.config.model.resolve(role).model) is None
+            }
+        )
+        print(
+            "\ncost is not reported: no price configured for "
+            + ", ".join(unpriced)
+            + ". Set model.prices in the config file to have spend counted."
+        )
     exhausted = ledger.exhausted_resources()
     near = ledger.near_exhaustion()
     if exhausted:
@@ -706,6 +723,8 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
         max_steps_per_task=args.steps or context.config.model.max_steps_per_task,
         on_event=report,
         embeddings=context.embedding_index(),
+        models=context.models(),
+        max_concurrent_tasks=args.concurrency or context.config.model.max_concurrent_tasks,
     )
     run = await scheduler.run(max_tasks=args.max_tasks, plan_size=args.plan_size)
 
@@ -1115,6 +1134,10 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--max-tasks", type=int, default=None, dest="max_tasks")
     investigate.add_argument("--plan-size", type=int, default=4, dest="plan_size")
     investigate.add_argument("--steps", type=int, default=None, help="steps per task")
+    investigate.add_argument(
+        "--concurrency", type=int, default=None,
+        help="research tasks to run at once (default from config)",
+    )
     investigate.add_argument(
         "--model", choices=["auto", "offline"], default="auto",
         help=(

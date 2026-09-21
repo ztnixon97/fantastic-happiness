@@ -53,6 +53,10 @@ class BudgetPolicy:
     max_provider_calls: int = 400
     max_model_calls: int = 200
     max_tokens: int = 2_000_000
+    #: A ceiling in money, counted only over models the configuration has
+    #: priced. Unlimited by default, because an unpriced model would make
+    #: any other default silently unenforceable.
+    max_cost: float = float("inf")
     max_failed_source_calls: int = 50
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,11 +138,58 @@ class ProviderSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTier:
+    """An override of the default model, for roles that need a different one.
+
+    Every field is optional and falls back to the defaults on
+    :class:`ModelSettings`, so naming a cheaper model for the gathering roles
+    does not mean restating the provider, the token limit and the endpoint.
+    """
+
+    model: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    max_tokens: int | None = None
+    temperature: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {key: value for key, value in asdict(self).items() if value is not None}
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "ModelTier":
+        # A tier written as a bare string is the common case: `fast: gpt-4.1-mini`.
+        if isinstance(data, str):
+            return cls(model=data)
+        known = {f: data[f] for f in cls.__dataclass_fields__ if f in (data or {})}
+        return cls(**known)
+
+
+#: Which tier each role uses when configuration does not say otherwise.
+#: Planning and synthesis decide the shape of the whole investigation and are
+#: called a handful of times; gathering is called constantly and mostly picks
+#: the next search. Spending the same model on both is the expensive mistake.
+DEFAULT_ROLE_TIERS: dict[str, str] = {
+    "planner": "strategic",
+    "synthesizer": "strategic",
+    "skeptic": "default",
+    "scout": "default",
+    "academic": "fast",
+    "news": "fast",
+    "primary_source": "fast",
+    "social": "fast",
+}
+
+
+@dataclass(frozen=True, slots=True)
 class ModelSettings:
     """Which model conducts the reasoning, and how far it may go.
 
     ``provider`` selects an adapter, not a vendor lock: ``openai`` here means
     an OpenAI-compatible endpoint, which a local server also provides.
+
+    The fields here are the default. ``fast`` and ``strategic`` override it
+    for the roles mapped to them, and ``roles`` re-maps any role to any tier.
+    Leave them alone and every role uses one model, as before.
     """
 
     provider: str = "anthropic"
@@ -148,6 +199,23 @@ class ModelSettings:
     temperature: float = 0.0
     #: Steps a single research worker may take before it must return.
     max_steps_per_task: int = 8
+    #: Research tasks running at once. Tasks are independent by
+    #: construction, so this is throughput; the cost is that the stopping
+    #: rules are evaluated between batches rather than between tasks, so a
+    #: run can overshoot by up to this many tasks.
+    max_concurrent_tasks: int = 4
+    #: Cheaper model for the roles that mostly decide which search to run.
+    fast: ModelTier = field(default_factory=ModelTier)
+    #: Stronger model for the roles that decide the shape of the whole run.
+    strategic: ModelTier = field(default_factory=ModelTier)
+    #: role name -> tier name, overriding DEFAULT_ROLE_TIERS.
+    roles: dict[str, str] = field(default_factory=dict)
+    #: Model name -> (input, output) price per million tokens. There is no
+    #: built-in table on purpose: published prices change, vary by tier and
+    #: by region, and a stale number reported as this run's cost would be a
+    #: fabricated figure in a system whose whole point is not fabricating
+    #: figures. An unpriced model reports tokens and says cost is unknown.
+    prices: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,7 +223,60 @@ class ModelSettings:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelSettings":
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
+        for name in ("fast", "strategic"):
+            if name in known:
+                known[name] = ModelTier.from_dict(known[name])
+        if "roles" in known:
+            known["roles"] = {str(k): str(v) for k, v in (known["roles"] or {}).items()}
+        if "prices" in known:
+            known["prices"] = {
+                str(name): (float(pair[0]), float(pair[1]))
+                for name, pair in (known["prices"] or {}).items()
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            }
         return cls(**known)
+
+    def tier_for(self, role: str | None) -> str:
+        if not role:
+            return "default"
+        return self.roles.get(str(role)) or DEFAULT_ROLE_TIERS.get(str(role), "default")
+
+    def resolve(self, role: str | None = None) -> "ResolvedModel":
+        """The provider, model and limits a given role should use."""
+        tier_name = self.tier_for(role)
+        tier = {"fast": self.fast, "strategic": self.strategic}.get(tier_name, ModelTier())
+        return ResolvedModel(
+            tier=tier_name,
+            provider=tier.provider or self.provider,
+            model=tier.model or self.model,
+            base_url=tier.base_url if tier.base_url is not None else self.base_url,
+            max_tokens=tier.max_tokens or self.max_tokens,
+            temperature=(
+                tier.temperature if tier.temperature is not None else self.temperature
+            ),
+        )
+
+    def price(self, model: str) -> tuple[float, float] | None:
+        entry = self.prices.get(model)
+        if not entry:
+            return None
+        return (float(entry[0]), float(entry[1]))
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedModel:
+    """One role's model, after tiers have been applied."""
+
+    tier: str
+    provider: str
+    model: str
+    base_url: str | None
+    max_tokens: int
+    temperature: float
+
+    def describe(self) -> str:
+        return f"{self.provider}:{self.model} ({self.tier})"
+
 
 
 @dataclass(frozen=True, slots=True)
