@@ -8,6 +8,7 @@ that persists what it returns.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -90,10 +91,17 @@ def test_sources_cannot_persist_anything() -> None:
         assert "research.storage" not in text, f"{path.name} reaches into storage"
 
 
+#: Calls to the builtins, not methods that happen to share their names -
+#: a model's .eval() switches off dropout and evaluates nothing.
+_EVALUATES = re.compile(r"(?<![\w.])(eval|exec)\s*\(")
+_FORBIDDEN = ("subprocess", "os.system", "pty.spawn")
+
+
 def test_research_loop_has_no_execution_primitives() -> None:
     """No part of the research core may run a command or evaluate code."""
-    forbidden = ("subprocess", "os.system", "eval(", "exec(", "pty.spawn")
     for path in PACKAGE.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        for marker in forbidden:
+        for marker in _FORBIDDEN:
             assert marker not in text, f"{path.relative_to(PACKAGE)} contains {marker!r}"
+        found = _EVALUATES.search(text)
+        assert not found, f"{path.relative_to(PACKAGE)} calls {found.group(0)!r}"

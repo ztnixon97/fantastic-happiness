@@ -705,6 +705,7 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
         ledger=ledger,
         max_steps_per_task=args.steps or context.config.model.max_steps_per_task,
         on_event=report,
+        embeddings=context.embedding_index(),
     )
     run = await scheduler.run(max_tasks=args.max_tasks, plan_size=args.plan_size)
 
@@ -831,7 +832,7 @@ async def cmd_ingest(context: CliContext, args: argparse.Namespace) -> int:
 async def cmd_find(context: CliContext, args: argparse.Namespace) -> int:
     """Search evidence the investigation already holds."""
     search = context.corpus_search(
-        args.investigation, embeddings=True if args.embeddings else None
+        args.investigation, embeddings=False if args.no_embeddings else None
     )
     hits = await search.search(
         args.query,
@@ -868,23 +869,32 @@ async def cmd_find(context: CliContext, args: argparse.Namespace) -> int:
 
 
 async def cmd_index(context: CliContext, args: argparse.Namespace) -> int:
-    """Rebuild the retrieval indexes for an investigation."""
+    """Rebuild the retrieval indexes for an investigation.
+
+    Searching maintains both indexes on its own; this is for repairing them,
+    and for embedding a whole corpus up front rather than over the first few
+    searches.
+    """
     search = context.corpus_search(
-        args.investigation, embeddings=True if args.embeddings else None
+        args.investigation, embeddings=False if args.no_embeddings else None
     )
     indexed = search.rebuild_index()
     print(f"full-text index: {indexed} documents")
-    if args.embeddings:
-        if search.embeddings is None:
-            print("embeddings are not configured", file=sys.stderr)
-            return 1
-        documents = context.store.documents.list(args.investigation, limit=2000)
+    if search.embeddings is not None:
+        documents = context.store.documents.list(args.investigation, limit=args.max_documents)
         try:
             written = await search.embeddings.index(documents)
         except ResearchError as exc:
             print(f"embedding failed: {exc}", file=sys.stderr)
             return 1
-        print(f"embeddings: {written} documents vectorised")
+        if written:
+            print(f"vectors: {written} documents embedded")
+        elif search.embeddings.unavailable:
+            print(
+                f"vectors: unavailable ({search.embeddings.unavailable}); "
+                "searches will run on lexical and graph results alone",
+                file=sys.stderr,
+            )
     print(as_json(search.stats()))
     return 0
 
@@ -1142,8 +1152,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="require every term rather than ranking by overlap",
     )
     find.add_argument(
-        "--embeddings", action="store_true",
-        help="also rank by vector similarity (needs an embedding provider)",
+        "--no-embeddings", action="store_true", dest="no_embeddings",
+        help="rank on words and graph alone, without the vector retriever",
     )
     find.set_defaults(handler=cmd_find)
 
@@ -1180,7 +1190,12 @@ def build_parser() -> argparse.ArgumentParser:
     index = subparsers.add_parser("index", help="rebuild retrieval indexes")
     index.add_argument("investigation")
     index.add_argument(
-        "--embeddings", action="store_true", help="also compute document vectors"
+        "--no-embeddings", action="store_true", dest="no_embeddings",
+        help="rebuild the full-text index only",
+    )
+    index.add_argument(
+        "--max-documents", type=int, default=5000, dest="max_documents",
+        help="how many documents to embed in one pass (default 5000)",
     )
     index.set_defaults(handler=cmd_index)
 

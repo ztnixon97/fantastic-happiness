@@ -18,6 +18,7 @@ from typing import Any
 from research.agents.actions import ACTIONS
 from research.agents.prompts import system_prompt, task_prompt
 from research.agents.runtime import ActionRequest, ActionRuntime, Observation, document_brief
+from research.retrieval.search import CorpusSearch
 from research.errors import BudgetExceeded, ModelError, ModelOutputError
 from research.graph.independence import independent_documents
 from research.llm.base import Message, ModelClient, extract_json
@@ -67,6 +68,7 @@ class ResearchWorker:
         investigation_id: str,
         ledger: BudgetLedger,
         max_steps: int = 8,
+        embeddings: Any = None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -74,6 +76,7 @@ class ResearchWorker:
         self.investigation_id = investigation_id
         self.ledger = ledger
         self.max_steps = max_steps
+        self.embeddings = embeddings
 
     async def run(self, task: ResearchTask) -> WorkerOutcome:
         investigation = self.store.investigations.get(self.investigation_id)
@@ -83,6 +86,9 @@ class ResearchWorker:
             investigation_id=self.investigation_id,
             task=task,
             ledger=self.ledger,
+            corpus=CorpusSearch(
+                self.store, self.investigation_id, embeddings=self.embeddings
+            ),
         )
         self.store.tasks.mark_running(task.id)
 

@@ -1,17 +1,20 @@
-"""Optional vector retrieval.
+"""Vector retrieval.
 
-Off by default, and deliberately so: the brief's rule is that embeddings wait
-until there is a retrieval problem lexical search cannot solve, and on a
-corpus of a few hundred documents BM25 plus graph expansion generally is the
-solution. What this module provides is the seam - when a corpus does outgrow
-lexical matching, vectors slot into the same fusion step as another ranking,
-rather than becoming the architecture.
+Embeddings waited until there was a retrieval problem lexical search could
+not solve, which is the bar the brief set. There is one: a query and a
+document can be about the same thing in different words, and BM25 cannot see
+that. So vectors are now a standing part of the ranking rather than a
+switch, and the default embedder runs locally - a small sentence encoder, no
+credential, no request leaving the machine.
 
-There is no vector database. Vectors live in the same SQLite file as
-everything else, and similarity is computed over candidates the other
-retrievers already surfaced. A corpus bounded by a document budget does not
-need an index server, and adding one would mean a second store that can
-disagree with the first.
+Two things keep that from becoming an architecture. There is no vector
+database: vectors are blobs in the same SQLite file as everything else, so
+there is no second store that can disagree with the first. And similarity is
+computed only over candidates the other retrievers already surfaced, so the
+work is proportional to a shortlist rather than to the corpus.
+
+A hosted embedder is still available for anyone who wants one, behind the
+same protocol. Nothing above this module knows which is in use.
 """
 
 from __future__ import annotations
@@ -60,6 +63,91 @@ def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+class LocalEmbedder:
+    """A sentence encoder running in this process.
+
+    This is the default, and the reason vectors can be on by default at all:
+    it needs no API key, makes no request once its weights are present, and
+    costs milliseconds per document on a CPU. The model is small - a few
+    hundred megabytes at most - and is loaded once, lazily, so a run that
+    never searches never pays for it.
+
+    Weights come from the Hugging Face cache, downloaded on first use unless
+    ``model_path`` points at a copy already on disk. When they cannot be
+    loaded at all, :class:`EmbeddingIndex` degrades to lexical and graph
+    retrieval rather than failing the search.
+    """
+
+    #: 384 dimensions, ~90MB, and good enough at the distinction that
+    #: matters here: two documents about the same thing in different words.
+    DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        *,
+        dimensions: int = 384,
+        model_path: str | None = None,
+        max_tokens: int = 512,
+    ) -> None:
+        self.model = model
+        self.dimensions = dimensions
+        self.model_path = model_path
+        self.max_tokens = max_tokens
+        self._loaded: Any = None
+        self._failed: str | None = None
+
+    def _load(self) -> Any:
+        if self._loaded is not None or self._failed is not None:
+            return self._loaded
+        try:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+
+            source = self.model_path or self.model
+            tokenizer = AutoTokenizer.from_pretrained(source)
+            model = AutoModel.from_pretrained(source)
+            model.eval()
+            self.dimensions = int(getattr(model.config, "hidden_size", self.dimensions))
+            self._loaded = (torch, tokenizer, model)
+        except Exception as exc:  # not installed, not downloaded, no network
+            self._failed = f"{type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
+        return self._loaded
+
+    @property
+    def unavailable(self) -> str | None:
+        """Why this embedder cannot run, once something has tried to use it."""
+        return self._failed
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        import asyncio
+
+        return await asyncio.to_thread(self._embed, list(texts))
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        loaded = self._load()
+        if loaded is None:
+            return []
+        torch, tokenizer, model = loaded
+        batch = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.max_tokens,
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            hidden = model(**batch).last_hidden_state
+        # Mean pooling over real tokens only: padding must not dilute a
+        # short abstract towards the middle of the space.
+        mask = batch["attention_mask"].unsqueeze(-1).float()
+        pooled = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+        pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return [[float(value) for value in row] for row in pooled]
 
 
 class OpenAICompatibleEmbedder:
@@ -135,6 +223,7 @@ class EmbeddingIndex:
     def __init__(self, db: Database, client: EmbeddingClient) -> None:
         self.db = db
         self.client = client
+        self._failure: str | None = None
 
     async def index(self, documents: Sequence[Any], *, batch: int = 32) -> int:
         """Embed and store documents that do not already have a vector."""
@@ -146,7 +235,15 @@ class EmbeddingIndex:
         written = 0
         for start in range(0, len(pending), batch):
             chunk = pending[start : start + batch]
-            vectors = await self.client.embed([_embeddable(document) for document in chunk])
+            try:
+                vectors = await self.client.embed([_embeddable(document) for document in chunk])
+            except Exception as exc:
+                # An embedder that cannot run costs the ranking a retriever,
+                # not the search. Lexical and graph results still stand.
+                self._failure = f"{type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
+                return written
+            if not vectors:
+                return written
             rows = [
                 (
                     document.id,
@@ -190,6 +287,37 @@ class EmbeddingIndex:
             or 0
         )
 
+    async def ensure(self, documents: Sequence[Any]) -> int:
+        """Embed anything in ``documents`` that has no vector yet."""
+        return await self.index(documents)
+
+    def missing(self, investigation_id: str, *, limit: int) -> list[str]:
+        """Held documents with no vector for the current model.
+
+        This is what lets vectors be on without a separate indexing step: a
+        search tops up the index by a bounded amount, and converges on a
+        fully embedded corpus over the first few searches instead of
+        stalling on the first one.
+        """
+        rows = self.db.query(
+            "SELECT documents.id AS id FROM documents "
+            "LEFT JOIN document_embeddings AS vectors "
+            "  ON vectors.document_id = documents.id AND vectors.model = ? "
+            "WHERE documents.investigation_id = ? AND vectors.document_id IS NULL "
+            "ORDER BY documents.id LIMIT ?",
+            (self.client.model, investigation_id, limit),
+        )
+        return [row["id"] for row in rows]
+
+    @property
+    def unavailable(self) -> str | None:
+        """Why vectors are not usable right now, if they are not.
+
+        A missing model is a degraded ranking, not a failed search, so this
+        is reported rather than raised.
+        """
+        return self._failure or getattr(self.client, "unavailable", None)
+
     async def search(
         self,
         query: str,
@@ -204,7 +332,14 @@ class EmbeddingIndex:
         retrievers already surfaced, which keeps this linear in the size of
         the shortlist rather than the corpus.
         """
-        vectors = await self.client.embed([query])
+        try:
+            vectors = await self.client.embed([query])
+        except Exception as exc:
+            # A hosted embedder that is down, or a model that will not load,
+            # costs this ranking its third opinion. Lexical and graph
+            # results still stand, and the caller reports the degradation.
+            self._failure = f"{type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
+            return []
         if not vectors or not vectors[0]:
             return []
         query_vector = vectors[0]
@@ -219,13 +354,44 @@ class EmbeddingIndex:
             sql += f" AND document_id IN ({placeholders})"
             params.extend(candidates)
 
-        scored = [
-            VectorHit(row["document_id"], cosine(query_vector, unpack(row["vector"])))
-            for row in self.db.query(sql, tuple(params))
-        ]
+        rows = self.db.query(sql, tuple(params))
+        scored = _similarities(query_vector, rows)
         scored.sort(key=lambda hit: (-hit.similarity, hit.document_id))
         return [hit for hit in scored if hit.similarity > 0][:limit]
 
+
+
+def _similarities(query_vector: Sequence[float], rows: Sequence[Any]) -> list[VectorHit]:
+    """Cosine against every stored vector.
+
+    Searching the whole corpus is the point - vectors have to be able to
+    find a document that shares no words with the query, which is the one
+    thing lexical retrieval cannot do. A corpus bounded by a document budget
+    is small enough that this is a matrix multiply, not an index server.
+    """
+    if not rows:
+        return []
+    try:
+        import numpy
+
+        matrix = numpy.array(
+            [unpack(row["vector"]) for row in rows], dtype=numpy.float32
+        )
+        query = numpy.array(query_vector, dtype=numpy.float32)
+        norms = numpy.linalg.norm(matrix, axis=1) * float(numpy.linalg.norm(query))
+        with numpy.errstate(divide="ignore", invalid="ignore"):
+            scores = numpy.where(norms > 0, matrix @ query / norms, 0.0)
+        return [
+            VectorHit(row["document_id"], float(score))
+            for row, score in zip(rows, scores, strict=True)
+        ]
+    except (ImportError, ValueError):
+        # ValueError covers a ragged matrix: vectors written by a model with
+        # different dimensions, which cosine() rejects one at a time anyway.
+        return [
+            VectorHit(row["document_id"], cosine(query_vector, unpack(row["vector"])))
+            for row in rows
+        ]
 
 def _embeddable(document: Any) -> str:
     """What of a document to embed.

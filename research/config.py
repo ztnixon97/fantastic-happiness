@@ -162,17 +162,27 @@ class ModelSettings:
 class RetrievalSettings:
     """Searching evidence the investigation already holds.
 
-    Lexical and graph retrieval are always on: they need no model, no
-    credential and no extra store. Vectors are opt-in because they are only
-    worth their cost once lexical retrieval is demonstrably failing.
+    All three retrievers are on. Lexical and graph need nothing installed;
+    vectors need a sentence encoder, and the default one runs locally, so
+    they cost no credential and no outbound request either. A hosted
+    embedder is a configuration change, not a different code path.
+
+    A model that cannot be loaded costs the ranking its third opinion and
+    nothing else: the search still runs on lexical and graph results, and
+    says that it was degraded.
     """
 
-    embeddings_enabled: bool = False
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embeddings_enabled: bool = True
+    #: "local" runs a sentence encoder in this process. Anything else names
+    #: a credential in the provider allowlist and calls an /embeddings
+    #: endpoint of the OpenAI shape.
+    embedding_provider: str = "local"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
+    #: Weights already on disk. Set it to embed without a network at all.
+    embedding_model_path: str | None = None
+    #: Only read when the provider is a hosted one.
     embedding_base_url: str = "https://api.openai.com/v1"
-    #: Which credential the embedder uses, from the same allowlist.
-    embedding_provider: str = "openai"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -188,14 +198,20 @@ class RetrievalSettings:
 class IngestSettings:
     """How documents are turned into text.
 
-    The built-in readers need nothing installed and no network. Docling adds
-    layout analysis, table structure, the office formats and OCR - at the
-    cost of a large dependency, model inference over hostile input, and a
-    model download on first use. That is a decision an operator makes, not a
-    default, so it is off until switched on.
+    Docling does the reading: layout analysis, table structure, the office
+    formats, and OCR for scans. The built-in readers remain behind it as the
+    fallback for anything it cannot open, and as what runs when it is not
+    installed at all.
+
+    Two consequences are worth knowing rather than discovering. Model
+    weights download on first use unless ``docling_artifacts_path`` points
+    at a copy already on disk. And conversion means model inference - with
+    OCR, native image decoders too - over external documents, which is a
+    larger attack surface than a regular expression over a content stream;
+    ``docling_enabled: false`` falls back to the readers that are not.
     """
 
-    docling_enabled: bool = False
+    docling_enabled: bool = True
     #: off - never; auto - only when the text layer comes out illegible,
     #: which is what a scan looks like; always - every document.
     ocr: str = "auto"

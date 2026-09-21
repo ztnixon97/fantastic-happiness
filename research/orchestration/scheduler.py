@@ -65,6 +65,7 @@ class Scheduler:
         ledger: BudgetLedger,
         max_steps_per_task: int = 8,
         on_event: Any = None,
+        embeddings: Any = None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -72,6 +73,9 @@ class Scheduler:
         self.investigation_id = investigation_id
         self.ledger = ledger
         self.max_steps_per_task = max_steps_per_task
+        #: Vector index for workers' own searches of held evidence, so a
+        #: worker ranks its corpus the same way the CLI does.
+        self.embeddings = embeddings
         self.planner = Planner(
             store, model, investigation_id=investigation_id, ledger=ledger
         )
@@ -105,6 +109,7 @@ class Scheduler:
             investigation_id=self.investigation_id,
             ledger=self.ledger,
             max_steps=self.max_steps_per_task,
+            embeddings=self.embeddings,
         )
 
         while True:

@@ -28,8 +28,14 @@ from research.retrieval.lexical import LexicalIndex
 from research.storage.store import ResearchStore
 
 #: Lexical results are the spine of the ranking; graph expansion is what a
-#: keyword index cannot do; vectors, when enabled, are a third opinion.
+#: keyword index cannot do; vectors are the third opinion, and the one that
+#: notices a document about the same thing in different words.
 DEFAULT_WEIGHTS = {"lexical": 1.0, "graph": 0.8, "vector": 0.9}
+
+#: How many documents one search may embed before answering. Enough that a
+#: normal investigation is fully embedded by its first search, small enough
+#: that a large one answers promptly and catches up on the next.
+EMBED_PER_SEARCH = 256
 
 
 @dataclass(slots=True)
@@ -81,6 +87,11 @@ class CorpusSearch:
         self.lexical = LexicalIndex(store.db)
         self.graph = GraphExpansion(store, investigation_id)
         self.embeddings = embeddings
+        #: Set when a retriever could not run. A missing embedding model
+        #: costs the ranking an opinion, never the search.
+        self.degraded: str | None = None
+        #: Set when this search ran against a corpus still being embedded.
+        self.partly_embedded = False
 
     async def search(
         self,
@@ -109,14 +120,18 @@ class CorpusSearch:
                 reasons.setdefault(hit.document_id, []).extend(hit.reasons)
 
         if self.embeddings is not None:
-            candidates = {document_id for ordered in rankings.values() for document_id in ordered}
+            await self._top_up_vectors()
+            # Searched over the whole corpus, not over what lexical found:
+            # a document that shares no words with the query is exactly the
+            # one the other two retrievers cannot reach, and the only reason
+            # to have vectors at all.
             vector_hits = await self.embeddings.search(
-                query,
-                investigation_id=self.investigation_id,
-                limit=pool,
-                candidates=sorted(candidates) or None,
+                query, investigation_id=self.investigation_id, limit=pool
             )
-            rankings["vector"] = [hit.document_id for hit in vector_hits]
+            if vector_hits:
+                rankings["vector"] = [hit.document_id for hit in vector_hits]
+            elif self.embeddings.unavailable:
+                self.degraded = self.embeddings.unavailable
 
         fused = reciprocal_rank_fusion(rankings, weights=DEFAULT_WEIGHTS, reasons=reasons)
         if not fused:
@@ -144,6 +159,26 @@ class CorpusSearch:
         if collapse_copies:
             hits = self._collapse(hits)
         return hits[:limit]
+
+    async def _top_up_vectors(self) -> int:
+        """Embed a bounded batch of whatever is not embedded yet.
+
+        Held evidence arrives from searches, fetches and ingestion, none of
+        which should pay for a model, so vectors are brought up to date
+        here instead. The cap is what keeps the first search on a large
+        corpus from stalling: it catches up over the next few searches, and
+        the ranking is honest about running on a partly embedded corpus in
+        the meantime.
+        """
+        if self.embeddings is None:
+            return 0
+        missing = self.embeddings.missing(self.investigation_id, limit=EMBED_PER_SEARCH)
+        if not missing:
+            return 0
+        written = await self.embeddings.ensure(self.store.documents.get_many(missing))
+        if len(missing) == EMBED_PER_SEARCH:
+            self.partly_embedded = True
+        return written
 
     def _collapse(self, hits: list[CorpusHit]) -> list[CorpusHit]:
         """Keep one result per independent source.
@@ -178,10 +213,15 @@ class CorpusSearch:
         return self.lexical.rebuild(self.investigation_id)
 
     def stats(self) -> dict[str, Any]:
-        return {
+        stats: dict[str, Any] = {
             "documents": self.store.documents.count(self.investigation_id),
             "indexed": self.lexical.count(self.investigation_id),
             "embedded": self.embeddings.count(self.investigation_id)
             if self.embeddings
             else 0,
         }
+        if self.degraded:
+            stats["degraded"] = self.degraded
+        if self.partly_embedded:
+            stats["partly_embedded"] = True
+        return stats

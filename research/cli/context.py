@@ -44,24 +44,50 @@ class CliContext:
         return build_model(self.config)
 
     def corpus_search(self, investigation_id: str, *, embeddings: bool | None = None):
-        """Retrieval over held evidence, with vectors only if asked for."""
-        from research.retrieval.embeddings import EmbeddingIndex, OpenAICompatibleEmbedder
+        """Retrieval over held evidence: lexical, graph and vectors."""
         from research.retrieval.search import CorpusSearch
 
+        return CorpusSearch(
+            self.store, investigation_id, embeddings=self.embedding_index(embeddings)
+        )
+
+    def embedding_index(self, enabled: bool | None = None):
+        """The vector index, or None when vectors are switched off.
+
+        The default embedder runs in this process, so a search needs no
+        credential. Naming any other provider switches to an /embeddings
+        endpoint of the OpenAI shape and takes its key from the same
+        allowlist as everything else.
+        """
+        from research.retrieval.embeddings import (
+            EmbeddingIndex,
+            LocalEmbedder,
+            OpenAICompatibleEmbedder,
+        )
+
         settings = self.config.retrieval
-        use_vectors = settings.embeddings_enabled if embeddings is None else embeddings
-        index = None
-        if use_vectors:
-            index = EmbeddingIndex(
-                self.store.db,
-                OpenAICompatibleEmbedder(
-                    settings.embedding_model,
-                    dimensions=settings.embedding_dimensions,
-                    api_key=self.config.secret(settings.embedding_provider),
-                    base_url=settings.embedding_base_url,
-                ),
+        if not (settings.embeddings_enabled if enabled is None else enabled):
+            return None
+        if self.offline and not settings.embedding_model_path:
+            # --offline promises no network. Downloading model weights on
+            # first use would break that promise on exactly the machine that
+            # asked for it, so vectors sit out unless the weights are
+            # already named on disk.
+            return None
+        if settings.embedding_provider == "local":
+            client = LocalEmbedder(
+                settings.embedding_model,
+                dimensions=settings.embedding_dimensions,
+                model_path=settings.embedding_model_path,
             )
-        return CorpusSearch(self.store, investigation_id, embeddings=index)
+        else:
+            client = OpenAICompatibleEmbedder(
+                settings.embedding_model,
+                dimensions=settings.embedding_dimensions,
+                api_key=self.config.secret(settings.embedding_provider),
+                base_url=settings.embedding_base_url,
+            )
+        return EmbeddingIndex(self.store.db, client)
 
     def ledger(self, investigation_id: str) -> BudgetLedger:
         """Budget ledger for an investigation, using its stored policy.

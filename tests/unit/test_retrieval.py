@@ -13,10 +13,19 @@ import pytest
 from research.models.claim import ClaimEvidenceLink, EvidenceStance
 from research.models.common import DuplicateRelation, Provenance, SourceFamily, SourceType, utcnow
 from research.models.evidence import EvidenceDocument
-from research.retrieval.embeddings import EmbeddingIndex, HashingEmbedder, cosine, pack, unpack
+from research.config import RetrievalSettings
+from research.retrieval.embeddings import (
+    EmbeddingIndex,
+    HashingEmbedder,
+    LocalEmbedder,
+    cosine,
+    pack,
+    unpack,
+)
 from research.retrieval.fusion import reciprocal_rank_fusion
 from research.retrieval.graph import GraphExpansion
 from research.retrieval.lexical import LexicalIndex, prepare_query
+from research.retrieval import search as search_module
 from research.retrieval.search import CorpusSearch
 from research.storage.store import ResearchStore
 
@@ -404,3 +413,159 @@ class TestIndexMigration:
             assert index.count(investigation_id) == 1
             hits = index.search("cost overruns", investigation_id=investigation_id)
             assert len(hits) == 1
+
+
+class TestVectorsByDefault:
+    """Vectors are part of the ranking, not a switch - and never a blocker."""
+
+    def test_the_default_embedder_needs_no_credential(self) -> None:
+        settings = RetrievalSettings()
+        assert settings.embeddings_enabled is True
+        assert settings.embedding_provider == "local"
+
+    @pytest.mark.asyncio
+    async def test_the_shortlist_embeds_itself(self, corpus_store) -> None:
+        """No separate indexing step: a search embeds what it is about to rank."""
+        store, investigation, _ = corpus_store
+        index = EmbeddingIndex(store.db, HashingEmbedder())
+        assert index.count(investigation.id) == 0
+
+        search = CorpusSearch(store, investigation.id, embeddings=index)
+        hits = await search.search("cost overruns")
+
+        assert any("vector" in hit.ranks for hit in hits)
+        assert index.count(investigation.id) == len(
+            {document_id for hit in hits for document_id in [hit.document.id]}
+        ) or index.count(investigation.id) > 0
+        # Second search costs nothing: the vectors are in SQLite now.
+        before = index.count(investigation.id)
+        await search.search("cost overruns")
+        assert index.count(investigation.id) == before
+
+    @pytest.mark.asyncio
+    async def test_vectors_reach_a_document_that_shares_no_words(self, corpus_store) -> None:
+        """The one thing lexical retrieval cannot do, and the reason for vectors."""
+        store, investigation, documents = corpus_store
+        # An embedder that places one held document near this query and
+        # everything else far from it. What is under test is whether a
+        # vector hit can enter the ranking on its own, not model quality.
+        class Pointed:
+            model = "pointed"
+            dimensions = 2
+
+            async def embed(self, texts):
+                near = ("substation", "interconnection")
+                return [
+                    [1.0, 0.0] if any(word in text.lower() for word in near) else [0.0, 1.0]
+                    for text in texts
+                ]
+
+        # Not one of these words appears anywhere in the corpus, so lexical
+        # retrieval returns nothing and graph expansion has no seeds.
+        query = "substation headroom bottlenecks"
+        assert LexicalIndex(store.db).search(query, investigation_id=investigation.id) == []
+
+        search = CorpusSearch(
+            store, investigation.id, embeddings=EmbeddingIndex(store.db, Pointed())
+        )
+        hits = await search.search(query)
+
+        assert [hit.document.id for hit in hits] == [documents["siting"].id]
+        assert hits[0].ranks == {"vector": 1}
+
+    @pytest.mark.asyncio
+    async def test_embedding_catches_up_across_searches(self, corpus_store, monkeypatch) -> None:
+        """A large corpus must not stall the first search that touches it."""
+        store, investigation, _ = corpus_store
+        for number in range(9):
+            add_document(
+                store,
+                investigation.id,
+                title=f"Marine sediment survey {number}",
+                text="Sampling was carried out across three summers.",
+            )
+        monkeypatch.setattr(search_module, "EMBED_PER_SEARCH", 4)
+        index = EmbeddingIndex(store.db, HashingEmbedder())
+        search = CorpusSearch(store, investigation.id, embeddings=index)
+
+        await search.search("cost overruns")
+        assert index.count(investigation.id) == 4
+        assert search.stats()["partly_embedded"] is True
+
+        for _ in range(3):
+            await search.search("cost overruns")
+        assert index.count(investigation.id) == store.documents.count(investigation.id)
+
+    @pytest.mark.asyncio
+    async def test_a_model_that_cannot_load_costs_an_opinion_not_the_search(
+        self, corpus_store
+    ) -> None:
+        store, investigation, documents = corpus_store
+        index = EmbeddingIndex(store.db, LocalEmbedder())  # stubbed unloadable
+
+        search = CorpusSearch(store, investigation.id, embeddings=index)
+        hits = await search.search("cost overruns")
+
+        assert hits[0].document.id == documents["costs"].id
+        assert not any("vector" in hit.ranks for hit in hits)
+        assert search.degraded
+        assert "degraded" in search.stats()
+
+    @pytest.mark.asyncio
+    async def test_an_embedder_that_raises_does_not_lose_the_search(
+        self, corpus_store
+    ) -> None:
+        class Broken:
+            model = "broken"
+            dimensions = 8
+
+            async def embed(self, texts):
+                raise RuntimeError("the model host is down")
+
+        store, investigation, documents = corpus_store
+        search = CorpusSearch(
+            store, investigation.id, embeddings=EmbeddingIndex(store.db, Broken())
+        )
+        hits = await search.search("cost overruns")
+        assert hits[0].document.id == documents["costs"].id
+
+
+class TestLocalEmbedder:
+    def test_it_reports_why_it_cannot_run_rather_than_raising(self) -> None:
+        embedder = LocalEmbedder()
+        assert embedder._load() is None
+        assert embedder.unavailable
+
+    @pytest.mark.asyncio
+    async def test_it_returns_nothing_rather_than_failing(self) -> None:
+        assert await LocalEmbedder().embed(["anything at all"]) == []
+
+    @pytest.mark.asyncio
+    async def test_no_texts_is_not_a_model_load(self) -> None:
+        embedder = LocalEmbedder()
+        assert await embedder.embed([]) == []
+        assert embedder.unavailable is None, "nothing was asked for, nothing was loaded"
+
+
+class TestOfflineMode:
+    """--offline promises no network, and that has to include model weights."""
+
+    def _context(self, store, *, offline: bool, model_path: str | None = None):
+        from research.cli.context import CliContext
+        from research.config import ResearchConfig, RetrievalSettings
+        from research.sources.registry import SourceRegistry
+
+        config = ResearchConfig(
+            retrieval=RetrievalSettings(embedding_model_path=model_path)
+        )
+        return CliContext(store, config, SourceRegistry(), None, offline=offline)
+
+    def test_offline_sits_vectors_out_rather_than_fetching_weights(self, store) -> None:
+        assert self._context(store, offline=True).embedding_index() is None
+
+    def test_weights_already_on_disk_are_used_offline(self, store) -> None:
+        context = self._context(store, offline=True, model_path="/opt/models/minilm")
+        assert context.embedding_index() is not None
+
+    def test_a_normal_run_has_vectors(self, store) -> None:
+        assert self._context(store, offline=False).embedding_index() is not None

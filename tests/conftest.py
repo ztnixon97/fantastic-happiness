@@ -41,6 +41,32 @@ def isolate_environment(monkeypatch) -> None:
             monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def no_model_inference(monkeypatch) -> None:
+    """The suite never runs a model, whatever the defaults say.
+
+    Docling and the sentence encoder are both on by default now, and both
+    download weights on first use and take seconds to tens of seconds per
+    document. A suite whose result depends on a network, a cache directory,
+    or a machine's spare CPU is not a suite.
+
+    So both are made unavailable here, which exercises exactly the path a
+    machine without them takes: the built-in readers, and a ranking without
+    its third opinion. Tests that need either behaviour supply a stub and
+    assert on what the wiring does with it - see tests/unit/test_ingest.py
+    and tests/unit/test_retrieval.py.
+    """
+    from research.normalize import docling_reader
+    from research.retrieval import embeddings
+
+    monkeypatch.setattr(docling_reader, "available", lambda: False)
+    monkeypatch.setattr(
+        embeddings.LocalEmbedder,
+        "_load",
+        lambda self: setattr(self, "_failed", "disabled for tests") or None,
+    )
+
+
 @pytest.fixture
 def store() -> ResearchStore:
     with ResearchStore.in_memory() as opened:

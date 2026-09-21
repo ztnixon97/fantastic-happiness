@@ -21,6 +21,9 @@ network.
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e '.[dev]'
+# Document conversion and the sentence encoder share a torch install, so
+# this is a few GB. Model weights download on first use, and both degrade
+# to the dependency-free readers and a lexical+graph ranking without them.
 
 # An autonomous investigation: plan, work, recurse, stop. No network, no keys.
 .venv/bin/research --offline investigate "Are small modular reactors competitive for AI data centres?"
@@ -357,16 +360,24 @@ the store instead. Three retrievers, fused by reciprocal rank fusion:
 - **graph** — the investigation's own edges: what a document cites, what
   cites it, what else is attached to the same claim or entity. This is the
   part a keyword index cannot do, and every result says why it surfaced.
-- **vectors** — off by default. They wait for a retrieval problem lexical
-  search cannot solve; what is in the tree is the seam, not the
-  architecture. There is no vector database: vectors live in the same SQLite
-  file and are compared against the shortlist the other retrievers produced.
+- **vectors** — a local sentence encoder, no credential and no outbound
+  request. This is the one that finds a document sharing *no words* with the
+  query, so it searches the whole corpus rather than re-ranking what lexical
+  found. There is no vector database: vectors are blobs in the same SQLite
+  file, and a search tops up the index by a bounded batch, so it maintains
+  itself rather than needing an indexing step.
 
 ```
 $ research find investigation:1 "nuclear construction cost overrun"
 evidence:36  [lexical]       Continuous Improvement and Cost Overrun in Construction…
 evidence:43  [graph+lexical] Nuclear power plant construction costs, 1970-2020
              why: cited by evidence:9
+
+$ research find investigation:1 "substation headroom for datacentre loads"
+evidence:4   [vector] Utility statement          ← not one of those words is
+evidence:5   [vector] Construction cost overruns…  in the corpus
+$ research find investigation:1 "substation headroom for datacentre loads" --no-embeddings
+nothing held matches 'substation headroom for datacentre loads'
 ```
 
 RRF uses only each retriever's *ordering*: BM25 scores, graph weights and
@@ -374,6 +385,11 @@ cosine similarities are not comparable, and normalising them against each
 other would invent a relationship that is not there. Results respect
 independence like everything else — syndicated copies fold into the result
 for the document they copy, and are named there.
+
+A model that will not load costs the ranking its third opinion and nothing
+else: the search runs on lexical and graph results and reports that it was
+degraded. `embedding_model_path` points at weights already on disk, for a
+machine that should not fetch any.
 
 **Reading what you already have.** `research ingest <investigation> <paths…>`
 takes local files and folders in as evidence: PDF, plain text, Markdown, HTML
@@ -399,12 +415,13 @@ document whose contents are wrong. Where characters are dropped, the count
 travels with the document. A file's modification time is not treated as a
 publication date.
 
-**Layout, tables, Office formats and OCR.** `pip install research[docling]`
-and `ingest.docling_enabled: true` puts [Docling](https://github.com/docling-project/docling)
-in front of those readers. It does layout analysis and table structure, it
-opens Word, PowerPoint, Excel and EPUB, and with OCR it reads scans — which
-is the difference between a filing this system can use and one it can only
-refuse.
+**Layout, tables, Office formats and OCR.**
+[Docling](https://github.com/docling-project/docling) does the reading, and
+the built-in readers sit behind it as the fallback. It does layout analysis
+and table structure, it opens Word, PowerPoint, Excel and EPUB, and it reads
+scans — which is the difference between a filing this system can use and one
+it can only refuse. `--no-docling` and `ingest.docling_enabled: false` fall
+back to the readers that need nothing installed.
 
 The escalation is the design. A text layer is read in milliseconds; OCR takes
 tens of seconds, so it is not spent on documents that do not need it:
@@ -431,11 +448,12 @@ $ research ingest investigation:1 ~/filings --docling --ocr auto --type regulato
                /home/me/filings/notice.pdf  [docling+ocr]
 ```
 
-It stays off by default for three reasons, all of them real: it is a large
-dependency (it brings torch), it downloads model weights on first use, and it
-runs model inference — and, with OCR, native image decoders — over hostile
-input. Point `docling_artifacts_path` at a directory you have pre-populated
-and it converts without reaching out at all.
+Two consequences are worth knowing rather than discovering. Model weights
+download on first use — point `docling_artifacts_path` at a directory you
+have pre-populated and it converts without reaching out at all. And
+conversion means model inference, with OCR native image decoders too, over
+external documents; that is a larger attack surface than a regular
+expression over a content stream, and turning it off is a setting.
 
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
@@ -479,14 +497,17 @@ External content is hostile data. The controls are in code, not in prompts:
 - A PDF is read, never run. It can carry JavaScript, embedded files and
   launch actions; the reader takes bytes out of content streams and ignores
   every other structure in the file.
-- Docling is opt-in because enabling it changes this picture. Model
-  inference, and with OCR native image decoders, then parse external
-  documents in-process — a materially larger attack surface than a regular
-  expression over a content stream. It is a reasonable trade for being able
-  to read a scanned filing, and not a reasonable default, so it is a
-  configuration flag rather than a dependency. Its model weights download on
-  first use unless `docling_artifacts_path` points at a directory you have
-  already populated.
+- Document conversion runs models over external input, and that is the
+  largest attack surface here: layout and table models parse every
+  document, and OCR adds native image decoders. It is a real trade for
+  being able to read a scanned filing, it is the default, and
+  `ingest.docling_enabled: false` is the way back to readers that are not.
+  Weights download on first use unless `docling_artifacts_path` points at a
+  directory already populated.
+- The embedder runs locally by default, so held evidence is not sent
+  anywhere to be ranked. Naming a hosted provider instead does send document
+  text to it; that is a configuration change, and the credential comes from
+  the same allowlist as everything else.
 
 ## Configuration
 
@@ -517,16 +538,16 @@ acquisition:
   max_response_bytes: 5000000
 
 retrieval:
-  # Lexical and graph retrieval are always on. Vectors are opt-in, and only
-  # worth their cost once lexical retrieval is demonstrably failing.
-  embeddings_enabled: false
-  embedding_model: text-embedding-3-small
-  embedding_base_url: https://api.openai.com/v1
+  # All three retrievers are on. The default embedder runs in-process, so
+  # vectors cost no credential and no outbound request.
+  embeddings_enabled: true
+  embedding_provider: local          # or a name in the credential allowlist
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  # embedding_model_path: /opt/models/minilm   # weights already on disk
 
 ingest:
-  # Layout, tables, Office formats and OCR, at the cost of a large
-  # dependency and model inference over external documents.
-  docling_enabled: false
+  # Docling reads documents; the built-in readers are the fallback.
+  docling_enabled: true
   ocr: auto            # off | auto (only when there is no text layer) | always
   ocr_languages: [en]
   max_pages: 300
@@ -551,7 +572,7 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 659 tests, no network, ~22s
+.venv/bin/python -m pytest          # 671 tests, no network, ~22s
 ```
 
 Providers and models alike are exercised through recorded payloads served by
@@ -576,8 +597,10 @@ tested with the import forced to fail, so the suite does not quietly stop
 covering it once pypdf is installed. Docling is never actually run: it
 downloads model weights and takes tens of seconds per document, so what the
 suite tests is the wiring - when it is asked, what is done with what it
-returns, and what happens when it is absent or fails. The suite passes
-identically with it installed and without it.
+returns, and what happens when it is absent or fails. The same goes for the
+sentence encoder. Both are made unavailable for the whole suite, which
+exercises exactly the path a machine without them takes, and the suite passes
+identically with them installed and without them.
 
 ## Status
 
@@ -595,7 +618,8 @@ identically with it installed and without it.
 | Obsidian export | done |
 | Corpus retrieval (lexical + graph, vectors optional) | done |
 | Local document ingestion, PDF extraction | done |
-| Docling: layout, tables, Office formats, OCR | done, opt-in |
+| Docling: layout, tables, Office formats, OCR | done, default |
+| Vector retrieval, local encoder | done, default |
 
 Reddit is deliberately absent from the social sources: its API requires
 registered OAuth credentials and its terms restrict what may be stored and

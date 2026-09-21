@@ -399,11 +399,18 @@ SCAN_TEXT = (
 
 
 class TestDoclingChain:
-    def test_it_is_off_unless_configured_and_installed(self) -> None:
+    def test_it_is_the_default_reader(self) -> None:
+        assert IngestSettings().docling_enabled is True
+        assert IngestSettings().ocr == "auto"
+
+    def test_switching_it_off_is_a_setting(self, monkeypatch) -> None:
+        monkeypatch.setattr(docling_reader, "available", lambda: True)
+        assert converter_for(IngestSettings()) is not None
+        assert converter_for(IngestSettings(docling_enabled=False)) is None
+
+    def test_a_machine_without_it_falls_back_rather_than_failing(self) -> None:
+        """available() is stubbed False for the whole suite; this is that path."""
         assert converter_for(IngestSettings()) is None
-        assert converter_for(IngestSettings(docling_enabled=True)) is not None or (
-            not docling_reader.available()
-        )
 
     def test_when_it_is_on_it_is_asked_first(self, build_pdf) -> None:
         calls: list[dict] = []
@@ -536,6 +543,7 @@ class TestDoclingIngestion:
     def test_the_walk_only_offers_formats_something_can_read(
         self, store: ResearchStore, investigation, tmp_path
     ) -> None:
+        """Docling is unavailable here, so .docx is not offered to the reader."""
         (tmp_path / "report.docx").write_bytes(b"PK\x03\x04 docx")
         (tmp_path / "notes.md").write_text("# Notes\n\nThe operator confirmed it.\n")
 
@@ -543,6 +551,27 @@ class TestDoclingIngestion:
         assert ".docx" not in plain.readable
         report = plain.ingest([tmp_path])
         assert [entry.path.name for entry in report.files if entry.result] == ["notes.md"]
+
+    def test_office_formats_are_read_with_the_default_settings(
+        self, store: ResearchStore, investigation, tmp_path, monkeypatch
+    ) -> None:
+        """Nothing has to be switched on: a .docx is readable out of the box."""
+        monkeypatch.setattr(docling_reader, "available", lambda: True)
+        monkeypatch.setattr(
+            docling_reader,
+            "convert",
+            lambda data, filename, **kwargs: DoclingResult(
+                text="The operator stated that the queue wait is four years.",
+                method="docling",
+            ),
+        )
+        (tmp_path / "report.docx").write_bytes(b"PK\x03\x04 docx")
+
+        ingest = LocalIngest(store, investigation_id=investigation.id)
+        assert ".docx" in ingest.readable
+        report = ingest.ingest([tmp_path])
+        assert report.summary()["new_evidence"] == 1
+        assert report.documents[0].metadata["pdf_extractor"] == "docling"
 
     def test_settings_reach_the_extractor(
         self, store: ResearchStore, investigation, tmp_path, monkeypatch

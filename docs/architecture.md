@@ -456,13 +456,33 @@ evidence:9* rather than arriving with an unexplained score. In live running
 this is what promoted a paper that never used the query's words into the top
 three.
 
-**Vectors** are off by default and are a third opinion when on. There is no
-vector database: vectors are float32 blobs in the same SQLite file, and
-similarity is computed only over candidates the other retrievers already
-surfaced, which keeps the work proportional to the shortlist rather than to
-the corpus. A corpus bounded by a document budget does not need an index
-server, and adding one would mean a second store that can disagree with the
-first.
+**Vectors** are the third retriever, and the only one that can reach a
+document sharing no words with the query - which is why they search the whole
+corpus rather than re-ranking what lexical found. Restricting them to the
+other retrievers' shortlist, as an earlier version did, meant they could
+re-order recall but never add to it, which is most of the point of having
+them.
+
+The default embedder runs in this process: a small sentence encoder, no
+credential, nothing leaving the machine. That is what makes "on by default"
+honest - a hosted embedder would have made the default either broken without
+an API key or quietly sending held evidence to a vendor.
+
+There is still no vector database. Vectors are float32 blobs in the same
+SQLite file, so there is no second store that can disagree with the first,
+and similarity is a matrix multiply over a corpus bounded by a document
+budget. A search tops up the index by a bounded batch (`EMBED_PER_SEARCH`)
+rather than embedding everything before answering: a normal investigation is
+fully embedded by its first search, a large one catches up over the next few
+and says it is running partly embedded in the meantime. Acquisition and
+ingestion never pay for a model; retrieval does, where the vectors are
+actually wanted.
+
+A model that will not load - not downloaded, no network, not installed -
+costs the ranking its third opinion and nothing else. The search runs on
+lexical and graph results and reports `degraded`. The same is true of a
+hosted embedder that is down: both the query embedding and the indexing call
+are guarded, because an embedder failing must not fail a search.
 
 **Fusion** is reciprocal rank fusion, weighted per retriever. BM25 scores,
 graph connection weights and cosine similarities are not comparable, and
@@ -545,10 +565,12 @@ reader, the latter with its unmappable characters counted.
 
 `normalize/docling_reader.py` is the seam for Docling, which does layout
 analysis and table structure, opens the Office formats, and reads scans with
-OCR. It is off unless an operator turns it on, and its absence changes
-nothing: every caller asks for it through `converter_for(settings)`, which
-returns `None` when it is switched off or not installed, and `None` is how
-the rest of the code says "use the readers that need no dependency".
+OCR. It is what reads documents by default, and the built-in readers sit
+behind it as the fallback - for a file it cannot open, for a conversion that
+fails, and for a machine where it is not installed. Every caller asks for it
+through `converter_for(settings)`, which returns `None` when it is switched
+off or absent, and `None` is how the rest of the code says "use the readers
+that need no dependency".
 
 The chain in `extract_pdf` is ordered by cost, and each step's output
 decides whether the next one runs:
@@ -575,17 +597,19 @@ text; noise is still noise, whichever reader produced it.
 
 Three properties are deliberate:
 
-*It cannot quietly become required.* The extras are separate
-(`research[pdf]`, `research[docling]`), the config flag defaults to off, and
-a configuration that asks for Docling on a machine without it says so and
-falls back rather than failing the ingest.
+*It cannot quietly become mandatory.* It is the default, not the only path:
+`--no-docling` and `ingest.docling_enabled: false` fall back to readers that
+need nothing installed, and a machine without Docling takes that path on its
+own rather than failing the ingest. That fallback is not hypothetical - it is
+the path the whole test suite runs on.
 
-*It cannot quietly become the security model.* Enabling it means model
+*It cannot quietly become the security model.* Conversion means model
 inference - and, with OCR, native image decoders - parsing external
-documents in-process. That is a real change in attack surface, stated in the
-module's own docstring and in the README's security section, and it is why
-this is a decision an operator makes rather than a default. `artifacts_path`
-exists so a machine that should not reach out does not have to.
+documents in-process, which is the largest attack surface in this system.
+That is stated in the module's own docstring and in the README's security
+section rather than left to be discovered, and switching it off is one
+setting. `artifacts_path` exists so a machine that should not reach out does
+not have to.
 
 *It cannot quietly invent metadata.* Docling infers a title from layout
 rather than reading one off a field, so a document records where its title
@@ -593,13 +617,21 @@ came from: `docling layout (title)`, `first heading`, or `file name`. The
 same document also records which reader produced its text, so a report can
 be traced to the pass that read it.
 
-Tests never run it. It downloads model weights on first use and takes tens of
-seconds per document, so the suite exercises the wiring through a stub - when
-it is asked, with what, what is done with what it returns, and what happens
-when it is absent or fails - and passes identically with it installed and
-without it. Verified live against a scanned PDF with no text layer, which
-came back with every figure in it correct, and against a .docx, which the
-built-in readers cannot open at all.
+Tests never run it, and never run the sentence encoder either. Both download
+weights on first use and cost seconds to tens of seconds per document, and a
+suite whose result depends on a network, a cache directory or a machine's
+spare CPU is not a suite. An autouse fixture makes both unavailable, which
+means the suite runs on exactly the path a machine without them takes, and
+the behaviour that depends on them is exercised through stubs: when each is
+asked, with what, what is done with what it returns, and what happens when it
+is absent or fails. Checked both ways - the suite passes identically with
+them installed and without.
+
+Verified live instead: a scanned PDF with no text layer came back with every
+figure in it correct, a .docx the built-in readers cannot open at all was
+read, and a query whose words appear nowhere in the corpus returned three
+documents through the vector retriever that `--no-embeddings` returns none
+for.
 
 Fetching PDFs over HTTP is the same extraction behind the content-type
 allowlist, which now admits `application/pdf`. A PDF is read, never run: it
@@ -636,10 +668,10 @@ edits the canvas, the file stops being ours, which is the right outcome.
 
 ## Deliberate omissions
 
-- **Vector search is off, not absent.** It stayed out until lexical retrieval
-  had something it could not do; see *Retrieval* above for what changed and
-  what was built instead. Enabling it is a configuration flag and a
-  credential, and the default remains off.
+- **Vector search waited for its reason.** It stayed out until lexical
+  retrieval had something it demonstrably could not do - find a document
+  about the same thing in different words. It is now standing, with a local
+  encoder so that costs no credential; see *Retrieval* above.
 - **No credibility scores.** Claim status is an enum plus prose: "supported
   by one preprint and contradicted by two later studies" says something a
   number does not.
@@ -648,7 +680,7 @@ edits the canvas, the file stops being ours, which is the right outcome.
   interface is the seam if that changes.
 - **No UI.** Per the plan, not until the CLI pipeline is good. (Since built:
   `research ui`, read-only.)
-- **OCR is off, not absent.** A scanned PDF is refused with a reason
-  unless Docling is enabled, because reading one means model inference over
-  hostile input. When it is enabled, OCR output is held to the same
+- **OCR is not eager.** It runs only where a text layer has already failed,
+  because it costs tens of seconds per document; `ocr: always` and
+  `ocr: off` are the two ends of that. OCR output is held to the same
   legibility gate as everything else.
