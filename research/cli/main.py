@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -35,6 +36,7 @@ from research.models.claim import ClaimStatus, EvidenceStance
 from research.models.event import DatePrecision
 from research.normalize.html import parse_date
 from research.acquisition.ingest import LocalIngest
+from research.normalize.docling_reader import available as docling_available
 from research.models.common import SourceFamily, SourceType
 from research.models.investigation import InvestigationStatus, StopReason
 from research.normalize.text import truncate
@@ -761,10 +763,27 @@ async def cmd_report(context: CliContext, args: argparse.Namespace) -> int:
 async def cmd_ingest(context: CliContext, args: argparse.Namespace) -> int:
     """Read local files and folders into an investigation as evidence."""
     context.store.investigations.get(args.investigation)
+    settings = context.config.ingest
+    if args.docling or args.no_docling or args.ocr:
+        settings = replace(
+            settings,
+            docling_enabled=(
+                True if args.docling else False if args.no_docling
+                else settings.docling_enabled
+            ),
+            ocr=args.ocr or settings.ocr,
+        )
+    if settings.docling_enabled and not docling_available():
+        print(
+            "docling is enabled but not installed; install the 'docling' extra. "
+            "Falling back to the built-in readers.",
+            file=sys.stderr,
+        )
     ingest = LocalIngest(
         context.store,
         investigation_id=args.investigation,
         ledger=context.ledger(args.investigation),
+        settings=settings,
     )
     report = ingest.ingest(
         args.paths,
@@ -789,9 +808,11 @@ async def cmd_ingest(context: CliContext, args: argparse.Namespace) -> int:
             continue
         document = entry.document
         assert document is not None
-        marker = "+" if entry.is_new else "=" 
+        marker = "+" if entry.is_new else "="
         print(f"{marker} {document.id:<12} {truncate(document.title or entry.path.name, 58)}")
-        print(f"               {entry.path}")
+        reader = str(document.metadata.get("pdf_extractor") or "")
+        detail = f"{entry.path}" + (f"  [{reader}]" if reader.startswith("docling") else "")
+        print(f"               {detail}")
         for warning in entry.warnings:
             print(f"               ! {warning}")
     for entry in report.skipped:
@@ -1141,6 +1162,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="read only the files directly named, not folder contents",
     )
     ingest.add_argument("--note", help="why this material was added")
+    ingest.add_argument(
+        "--docling", action="store_true",
+        help="convert with docling: layout, tables, Office formats and OCR",
+    )
+    ingest.add_argument(
+        "--no-docling", action="store_true", dest="no_docling",
+        help="use the built-in readers even if docling is configured",
+    )
+    ingest.add_argument(
+        "--ocr", choices=("off", "auto", "always"),
+        help="read scans (needs docling). auto: only when there is no text layer",
+    )
     ingest.add_argument("--json", action="store_true")
     ingest.set_defaults(handler=cmd_ingest)
 

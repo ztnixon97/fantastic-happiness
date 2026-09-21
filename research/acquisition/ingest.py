@@ -33,6 +33,7 @@ from typing import Iterable, Iterator, Sequence
 
 from research.acquisition.pipeline import AcquisitionResult, EvidenceAcquirer
 from research.budgets import BudgetLedger
+from research.config import IngestSettings
 from research.models.common import (
     Provenance,
     RetrievalMethod,
@@ -42,7 +43,8 @@ from research.models.common import (
 )
 from research.models.evidence import EvidenceDocument
 from research.normalize.document import build_document
-from research.normalize.files import EXTENSIONS, extract_file
+from research.normalize.docling_reader import converter_for
+from research.normalize.files import extract_file, readable_kinds
 from research.storage.store import ResearchStore
 
 #: Larger than any paper or filing; small enough that a stray video or disk
@@ -108,14 +110,23 @@ class LocalIngest:
         investigation_id: str,
         ledger: BudgetLedger | None = None,
         acquirer: EvidenceAcquirer | None = None,
+        settings: IngestSettings | None = None,
         max_file_bytes: int = MAX_FILE_BYTES,
         max_text_characters: int = 400_000,
     ) -> None:
         self.store = store
         self.investigation_id = investigation_id
         self.acquirer = acquirer or EvidenceAcquirer(store, ledger=ledger)
+        self.settings = settings or IngestSettings()
+        #: None unless Docling is both installed and switched on, which is
+        #: also how the walk decides whether .docx and images are readable.
+        self.docling = converter_for(self.settings)
         self.max_file_bytes = max_file_bytes
         self.max_text_characters = max_text_characters
+
+    @property
+    def readable(self) -> dict[str, str]:
+        return readable_kinds(docling=self.docling is not None)
 
     def ingest(
         self,
@@ -191,7 +202,7 @@ class LocalIngest:
                 continue
             if not entry.is_file():
                 continue
-            if entry.suffix.lower() not in EXTENSIONS:
+            if entry.suffix.lower() not in self.readable:
                 continue
             resolved = entry.resolve()
             if resolved in seen:
@@ -230,7 +241,11 @@ class LocalIngest:
             return IngestedFile(path=path, skipped=f"could not be read: {exc.strerror or exc}")
 
         extracted = extract_file(
-            path.name, data, max_characters=self.max_text_characters
+            path.name,
+            data,
+            max_characters=self.max_text_characters,
+            docling=self.docling,
+            ocr=self.settings.ocr,
         )
         if not extracted.ok:
             return IngestedFile(
@@ -297,5 +312,5 @@ def _modified_at(path: Path) -> str | None:
         return None
 
 
-def readable_extensions() -> Iterable[str]:
-    return sorted(EXTENSIONS)
+def readable_extensions(*, docling: bool = False) -> Iterable[str]:
+    return sorted(readable_kinds(docling=docling))

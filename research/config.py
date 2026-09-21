@@ -183,12 +183,62 @@ class RetrievalSettings:
         return cls(**known)
 
 
+
+@dataclass(frozen=True, slots=True)
+class IngestSettings:
+    """How documents are turned into text.
+
+    The built-in readers need nothing installed and no network. Docling adds
+    layout analysis, table structure, the office formats and OCR - at the
+    cost of a large dependency, model inference over hostile input, and a
+    model download on first use. That is a decision an operator makes, not a
+    default, so it is off until switched on.
+    """
+
+    docling_enabled: bool = False
+    #: off - never; auto - only when the text layer comes out illegible,
+    #: which is what a scan looks like; always - every document.
+    ocr: str = "auto"
+    ocr_languages: tuple[str, ...] = ("en",)
+    #: Stop after this many pages rather than spending minutes on one
+    #: document. Conversion is bounded by page count because there is no
+    #: honest way to interrupt it partway: a timeout would abandon the
+    #: result while the work carried on.
+    max_pages: int = 300
+    #: Pre-downloaded model artifacts. Set it to convert without a network.
+    docling_artifacts_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.ocr not in ("off", "auto", "always"):
+            raise ValueError(f"ocr must be off, auto or always, not {self.ocr!r}")
+
+    @property
+    def ocr_when_illegible(self) -> bool:
+        return self.ocr in ("auto", "always")
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["ocr_languages"] = list(self.ocr_languages)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "IngestSettings":
+        known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
+        if "ocr_languages" in known:
+            known["ocr_languages"] = tuple(known["ocr_languages"])
+        if "ocr" in known and isinstance(known["ocr"], bool):
+            # 'ocr: true' in a config file is an understandable thing to write.
+            known["ocr"] = "auto" if known["ocr"] else "off"
+        return cls(**known)
+
+
 @dataclass(slots=True)
 class ResearchConfig:
     budget: BudgetPolicy = field(default_factory=BudgetPolicy)
     acquisition: AcquisitionPolicy = field(default_factory=AcquisitionPolicy)
     model: ModelSettings = field(default_factory=ModelSettings)
     retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
+    ingest: IngestSettings = field(default_factory=IngestSettings)
     providers: dict[str, ProviderSettings] = field(default_factory=dict)
     database_path: str | None = None
     contact_email: str | None = None
@@ -216,6 +266,7 @@ class ResearchConfig:
             "acquisition": self.acquisition.to_dict(),
             "model": self.model.to_dict(),
             "retrieval": self.retrieval.to_dict(),
+            "ingest": self.ingest.to_dict(),
             "providers": {
                 name: {
                     "enabled": settings.enabled,
@@ -274,6 +325,7 @@ def load_config(
     acquisition = AcquisitionPolicy.from_dict(data.get("acquisition", {}))
     model = ModelSettings.from_dict(data.get("model", {}))
     retrieval = RetrievalSettings.from_dict(data.get("retrieval", {}))
+    ingest = IngestSettings.from_dict(data.get("ingest", {}))
 
     providers: dict[str, ProviderSettings] = {}
     for name, raw in (data.get("providers") or {}).items():
@@ -307,6 +359,7 @@ def load_config(
         acquisition=acquisition,
         model=model,
         retrieval=retrieval,
+        ingest=ingest,
         providers=providers,
         database_path=data.get("database_path"),
         contact_email=contact,

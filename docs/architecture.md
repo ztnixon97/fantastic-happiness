@@ -515,14 +515,16 @@ weighed for recency as if that date meant something.
 Most primary records are published as PDFs, so `normalize/pdf.py` extracts
 text from them - and this is where the interesting failure lives.
 
-There are two extractors. `pypdf` is used when installed (`pip install
-research[pdf]`), because it handles the font encodings real documents use.
-Without it, a built-in reader decodes Flate-compressed content streams and
-the text-showing operators, which covers PDFs produced from text; it does
-*not* resolve embedded CMaps, so a document using a CID font comes out as
-noise. pypdf is also stricter about file structure than the format is in
-practice, so a file it refuses falls back to the simpler reader rather than
-being given up on.
+There are three, and which one runs is decided by what the cheaper ones
+produce.
+
+`pypdf` is used when installed (`pip install research[pdf]`), because it
+handles the font encodings real documents use. Without it, a built-in reader
+decodes Flate-compressed content streams and the text-showing operators,
+which covers PDFs produced from text; it does *not* resolve embedded CMaps,
+so a document using a CID font comes out as noise. pypdf is also stricter
+about file structure than the format is in practice, so a file it refuses
+falls back to the simpler reader rather than being given up on.
 
 That noise is the dangerous case, because it looks like text to everything
 downstream: it would be stored as evidence, indexed, and quoted. So
@@ -538,6 +540,66 @@ contain them, and excerpts are checked against stored text.
 Verified against real files rather than only generated ones: a 29-page arXiv
 paper and a 28-page SEC form both come out legible through the built-in
 reader, the latter with its unmappable characters counted.
+
+### Docling, and what it is allowed to change
+
+`normalize/docling_reader.py` is the seam for Docling, which does layout
+analysis and table structure, opens the Office formats, and reads scans with
+OCR. It is off unless an operator turns it on, and its absence changes
+nothing: every caller asks for it through `converter_for(settings)`, which
+returns `None` when it is switched off or not installed, and `None` is how
+the rest of the code says "use the readers that need no dependency".
+
+The chain in `extract_pdf` is ordered by cost, and each step's output
+decides whether the next one runs:
+
+```
+docling (layout, tables)  ─┐
+                           ├─ legible?  ── yes ──▶ store
+pypdf → built-in reader   ─┘      │
+                                  └── no text layer ──▶ docling + OCR
+```
+
+The escalation to OCR reuses a gate that already existed. The legibility
+check was built to stop noise from a CID-encoded PDF being stored as
+evidence; "nothing readable came out" is also exactly the signal that a
+document has no text layer, which is what a scan is. So `ocr: auto` spends
+tens of seconds per document only where milliseconds have already failed,
+rather than on every PDF. `ocr: always` reorders the chain for a corpus known
+to be scanned; `ocr: off` leaves it out. An image skips the text-layer
+attempt entirely - there is nothing there to try - and is refused rather
+than stored empty when OCR is off.
+
+OCR output faces the same gate as everything else. Degraded text is still
+text; noise is still noise, whichever reader produced it.
+
+Three properties are deliberate:
+
+*It cannot quietly become required.* The extras are separate
+(`research[pdf]`, `research[docling]`), the config flag defaults to off, and
+a configuration that asks for Docling on a machine without it says so and
+falls back rather than failing the ingest.
+
+*It cannot quietly become the security model.* Enabling it means model
+inference - and, with OCR, native image decoders - parsing external
+documents in-process. That is a real change in attack surface, stated in the
+module's own docstring and in the README's security section, and it is why
+this is a decision an operator makes rather than a default. `artifacts_path`
+exists so a machine that should not reach out does not have to.
+
+*It cannot quietly invent metadata.* Docling infers a title from layout
+rather than reading one off a field, so a document records where its title
+came from: `docling layout (title)`, `first heading`, or `file name`. The
+same document also records which reader produced its text, so a report can
+be traced to the pass that read it.
+
+Tests never run it. It downloads model weights on first use and takes tens of
+seconds per document, so the suite exercises the wiring through a stub - when
+it is asked, with what, what is done with what it returns, and what happens
+when it is absent or fails - and passes identically with it installed and
+without it. Verified live against a scanned PDF with no text layer, which
+came back with every figure in it correct, and against a .docx, which the
+built-in readers cannot open at all.
 
 Fetching PDFs over HTTP is the same extraction behind the content-type
 allowlist, which now admits `application/pdf`. A PDF is read, never run: it
@@ -586,6 +648,7 @@ edits the canvas, the file stops being ours, which is the right outcome.
   interface is the seam if that changes.
 - **No UI.** Per the plan, not until the CLI pipeline is good. (Since built:
   `research ui`, read-only.)
-- **No OCR.** A scanned PDF is refused with a reason rather than passed
-  through an image pipeline that would add a second kind of extraction
-  error to reason about.
+- **OCR is off, not absent.** A scanned PDF is refused with a reason
+  unless Docling is enabled, because reading one means model inference over
+  hostile input. When it is enabled, OCR output is held to the same
+  legibility gate as everything else.

@@ -7,10 +7,12 @@ import json
 import pytest
 
 from research.acquisition.ingest import LocalIngest
+from research.config import IngestSettings
 from research.models.common import SourceFamily, SourceType
 from research.normalize.files import detect_kind, extract_file
-from research.normalize import pdf
-from research.normalize.pdf import extract_pdf, looks_like_prose
+from research.normalize import docling_reader, pdf
+from research.normalize.docling_reader import DoclingResult, converter_for
+from research.normalize.pdf import extract_pdf, is_noise, looks_like_prose
 from research.storage.store import ResearchStore
 
 PARAGRAPHS = [
@@ -68,6 +70,12 @@ class TestPdfExtraction:
         extracted = extract_pdf(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF")
         assert not extracted.ok
         assert any("no text" in warning for warning in extracted.warnings)
+
+    def test_short_text_is_not_noise(self) -> None:
+        """Too short to grade is not the same as garbage."""
+        assert not looks_like_prose("A two-line notice.")
+        assert not is_noise("A two-line notice.")
+        assert is_noise("\u2803\u2804\u2805\u2806\u2807\u2808\u2809\u280a" * 20)
 
     @pytest.mark.parametrize(
         "text, prose",
@@ -344,3 +352,236 @@ class TestFetchedPdfs:
         document = await self._fetch(build_pdf(PARAGRAPHS, hex_strings=True))
         assert not (document.text or "").strip()
         assert "not legible" in document.metadata.get("pdf_warnings", "")
+
+
+# -- docling ---------------------------------------------------------------
+# Docling is never actually run here. It downloads model weights on first
+# use and takes tens of seconds per document, and a suite that needs either
+# is not a suite. What is tested is the wiring: when it is asked, what is
+# done with what it returns, and what happens when it is absent or fails.
+
+
+def stub_converter(
+    *, text: str = "", title: str | None = None, ocr_text: str | None = None,
+    fails: bool = False, calls: list[dict] | None = None,
+):
+    """A stand-in for a bound docling converter."""
+    def convert(data: bytes, filename: str, *, ocr: bool = False):
+        if calls is not None:
+            calls.append({"filename": filename, "ocr": ocr, "bytes": len(data)})
+        if fails:
+            return DoclingResult(warnings=["docling failed: synthetic"])
+        if ocr:
+            return DoclingResult(
+                text=ocr_text if ocr_text is not None else text,
+                title=title,
+                title_source="docling layout (title)" if title else None,
+                method="docling+ocr",
+                pages=1,
+            )
+        return DoclingResult(
+            text=text,
+            title=title,
+            title_source="docling layout (title)" if title else None,
+            method="docling",
+            pages=1,
+            tables=2,
+        )
+
+    return convert
+
+
+SCAN_TEXT = (
+    "NOTICE OF CONSTRUCTION COST REVISION\n\nThe licensee reports that the overnight "
+    "capital cost of the plant has increased by fifty-two percent against the estimate "
+    "filed in March."
+)
+
+
+class TestDoclingChain:
+    def test_it_is_off_unless_configured_and_installed(self) -> None:
+        assert converter_for(IngestSettings()) is None
+        assert converter_for(IngestSettings(docling_enabled=True)) is not None or (
+            not docling_reader.available()
+        )
+
+    def test_when_it_is_on_it_is_asked_first(self, build_pdf) -> None:
+        calls: list[dict] = []
+        converter = stub_converter(
+            text="Docling read this document with its layout intact.",
+            title="Cost overruns", calls=calls,
+        )
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS), filename="a.pdf", docling=converter, ocr="auto"
+        )
+        assert extracted.method == "docling"
+        assert extracted.title == "Cost overruns"
+        assert extracted.tables == 2
+        assert [call["ocr"] for call in calls] == [False], "OCR is not spent on a text layer"
+
+    def test_a_readable_pdf_never_reaches_ocr(self, build_pdf) -> None:
+        calls: list[dict] = []
+        converter = stub_converter(text="", ocr_text=SCAN_TEXT, calls=calls)
+        # Docling returns nothing, the built-in reader succeeds, so the
+        # expensive pass is never needed.
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS), filename="a.pdf", docling=converter, ocr="auto"
+        )
+        assert "overnight capital costs" in extracted.text
+        assert extracted.method in ("builtin", "pypdf")
+        assert [call["ocr"] for call in calls] == [False]
+
+    def test_a_scan_escalates_to_ocr(self, build_pdf) -> None:
+        """Nothing readable from the text layer is exactly the signal for OCR."""
+        calls: list[dict] = []
+        converter = stub_converter(text="", ocr_text=SCAN_TEXT, calls=calls)
+        scan = build_pdf(PARAGRAPHS, hex_strings=True)
+
+        extracted = extract_pdf(scan, filename="scan.pdf", docling=converter, ocr="auto")
+        assert extracted.method == "docling+ocr"
+        assert "fifty-two percent" in extracted.text
+        assert [call["ocr"] for call in calls] == [False, True]
+
+    def test_ocr_off_refuses_the_scan_and_says_what_would_fix_it(self, build_pdf) -> None:
+        converter = stub_converter(text="", ocr_text=SCAN_TEXT)
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS, hex_strings=True), filename="scan.pdf",
+            docling=converter, ocr="off",
+        )
+        assert not extracted.ok
+        assert any("ocr" in warning.lower() for warning in extracted.warnings)
+
+    def test_ocr_always_puts_the_ocr_pass_first(self, build_pdf) -> None:
+        calls: list[dict] = []
+        converter = stub_converter(text="unused", ocr_text=SCAN_TEXT, calls=calls)
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS), filename="a.pdf", docling=converter, ocr="always"
+        )
+        assert extracted.method == "docling+ocr"
+        assert calls[0]["ocr"] is True
+
+    def test_a_failed_conversion_falls_back_rather_than_losing_the_document(
+        self, build_pdf
+    ) -> None:
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS), filename="a.pdf",
+            docling=stub_converter(fails=True), ocr="auto",
+        )
+        assert "overnight capital costs" in extracted.text
+        assert any("synthetic" in warning for warning in extracted.warnings), (
+            "what was tried is still reported"
+        )
+
+    def test_ocr_output_faces_the_same_legibility_gate(self, build_pdf) -> None:
+        noise = "\u2803\u2804\u2805\u2806\u2807\u2808\u2809\u280a" * 20
+        extracted = extract_pdf(
+            build_pdf(PARAGRAPHS, hex_strings=True), filename="scan.pdf",
+            docling=stub_converter(text="", ocr_text=noise), ocr="auto",
+        )
+        assert not extracted.ok
+        assert extracted.method == "none"
+
+
+class TestDoclingFormats:
+    def test_word_files_are_unreadable_until_docling_is_enabled(self) -> None:
+        data = b"PK\x03\x04 pretend this is a docx"
+        assert detect_kind("notes.docx", data) is None
+        assert detect_kind("notes.docx", data, docling=True) == "word"
+
+        without = extract_file("notes.docx", data)
+        assert not without.ok
+        assert "docling adds Word" in without.warnings[0]
+
+    def test_a_word_file_is_converted_when_it_is_enabled(self) -> None:
+        extracted = extract_file(
+            "queue-review.docx",
+            b"PK\x03\x04 pretend this is a docx",
+            docling=stub_converter(text="The queue wait in that region is now four years."),
+        )
+        assert extracted.ok
+        assert extracted.kind == "word"
+        assert extracted.metadata["pdf_extractor"] == "docling"
+
+    def test_an_image_goes_straight_to_ocr(self) -> None:
+        calls: list[dict] = []
+        png = b"\x89PNG\r\n\x1a\n" + b"pretend this is pixels"
+        extracted = extract_file(
+            "scan.png", png, docling=stub_converter(ocr_text=SCAN_TEXT, calls=calls), ocr="auto"
+        )
+        assert extracted.ok
+        assert extracted.kind == "image"
+        assert [call["ocr"] for call in calls] == [True], "an image has no text layer to try"
+
+    def test_an_image_is_refused_when_ocr_is_off(self) -> None:
+        extracted = extract_file(
+            "scan.png",
+            b"\x89PNG\r\n\x1a\n" + b"pixels",
+            docling=stub_converter(ocr_text=SCAN_TEXT),
+            ocr="off",
+        )
+        assert not extracted.ok
+        assert "OCR" in extracted.warnings[0]
+
+    def test_a_title_falls_back_to_the_file_name_and_says_so(self) -> None:
+        extracted = extract_file(
+            "queue-review.docx",
+            b"PK\x03\x04 docx",
+            docling=stub_converter(text="Body text with no heading in it at all."),
+        )
+        assert extracted.title == "queue review"
+        assert extracted.metadata["title_source"] == "file name"
+
+
+class TestDoclingIngestion:
+    def test_the_walk_only_offers_formats_something_can_read(
+        self, store: ResearchStore, investigation, tmp_path
+    ) -> None:
+        (tmp_path / "report.docx").write_bytes(b"PK\x03\x04 docx")
+        (tmp_path / "notes.md").write_text("# Notes\n\nThe operator confirmed it.\n")
+
+        plain = LocalIngest(store, investigation_id=investigation.id)
+        assert ".docx" not in plain.readable
+        report = plain.ingest([tmp_path])
+        assert [entry.path.name for entry in report.files if entry.result] == ["notes.md"]
+
+    def test_settings_reach_the_extractor(
+        self, store: ResearchStore, investigation, tmp_path, monkeypatch
+    ) -> None:
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            docling_reader, "available", lambda: True
+        )
+        monkeypatch.setattr(
+            docling_reader,
+            "convert",
+            lambda data, filename, **kwargs: stub_converter(
+                ocr_text=SCAN_TEXT, calls=calls
+            )(data, filename, ocr=kwargs.get("ocr", False)),
+        )
+        (tmp_path / "scan.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"pixels")
+
+        ingest = LocalIngest(
+            store,
+            investigation_id=investigation.id,
+            settings=IngestSettings(docling_enabled=True, ocr="auto"),
+        )
+        report = ingest.ingest([tmp_path])
+
+        assert report.summary()["new_evidence"] == 1
+        assert calls and calls[0]["ocr"] is True
+        document = report.documents[0]
+        assert document.metadata["pdf_extractor"] == "docling+ocr"
+        assert "fifty-two percent" in (document.text or "")
+
+    def test_an_enabled_but_missing_docling_falls_back_quietly(
+        self, store: ResearchStore, investigation, folder, monkeypatch
+    ) -> None:
+        """A configuration that asks for more than is installed still works."""
+        monkeypatch.setattr(docling_reader, "available", lambda: False)
+        ingest = LocalIngest(
+            store,
+            investigation_id=investigation.id,
+            settings=IngestSettings(docling_enabled=True, ocr="always"),
+        )
+        assert ingest.docling is None
+        assert ingest.ingest([folder]).summary()["new_evidence"] == 3

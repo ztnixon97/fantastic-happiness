@@ -399,6 +399,44 @@ document whose contents are wrong. Where characters are dropped, the count
 travels with the document. A file's modification time is not treated as a
 publication date.
 
+**Layout, tables, Office formats and OCR.** `pip install research[docling]`
+and `ingest.docling_enabled: true` puts [Docling](https://github.com/docling-project/docling)
+in front of those readers. It does layout analysis and table structure, it
+opens Word, PowerPoint, Excel and EPUB, and with OCR it reads scans — which
+is the difference between a filing this system can use and one it can only
+refuse.
+
+The escalation is the design. A text layer is read in milliseconds; OCR takes
+tens of seconds, so it is not spent on documents that do not need it:
+
+```
+                    ┌ docling (layout + tables) ┐
+PDF ────────────────┤                           ├── legible? ── store
+                    └ pypdf → built-in reader ──┘      │
+                                                       │ no text layer
+                                  docling + OCR ───────┘
+```
+
+The legibility gate above is what decides a document is a scan: an earlier
+pass producing nothing readable is precisely the signal that there is nothing
+to read without OCR. `--ocr always` puts the OCR pass first for a corpus
+known to be scanned; `--ocr off` never runs it. Images skip straight to OCR,
+because an image has no text layer to try. Every document records which
+reader produced it, and whether its title was read, inferred from layout, or
+taken from the file name.
+
+```
+$ research ingest investigation:1 ~/filings --docling --ocr auto --type regulatory
++ evidence:1   NOTICE OF CONSTRUCTION COST REVISION
+               /home/me/filings/notice.pdf  [docling+ocr]
+```
+
+It stays off by default for three reasons, all of them real: it is a large
+dependency (it brings torch), it downloads model weights on first use, and it
+runs model inference — and, with OCR, native image decoders — over hostile
+input. Point `docling_artifacts_path` at a directory you have pre-populated
+and it converts without reaching out at all.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -441,6 +479,14 @@ External content is hostile data. The controls are in code, not in prompts:
 - A PDF is read, never run. It can carry JavaScript, embedded files and
   launch actions; the reader takes bytes out of content streams and ignores
   every other structure in the file.
+- Docling is opt-in because enabling it changes this picture. Model
+  inference, and with OCR native image decoders, then parse external
+  documents in-process — a materially larger attack surface than a regular
+  expression over a content stream. It is a reasonable trade for being able
+  to read a scanned filing, and not a reasonable default, so it is a
+  configuration flag rather than a dependency. Its model weights download on
+  first use unless `docling_artifacts_path` points at a directory you have
+  already populated.
 
 ## Configuration
 
@@ -477,6 +523,16 @@ retrieval:
   embedding_model: text-embedding-3-small
   embedding_base_url: https://api.openai.com/v1
 
+ingest:
+  # Layout, tables, Office formats and OCR, at the cost of a large
+  # dependency and model inference over external documents.
+  docling_enabled: false
+  ocr: auto            # off | auto (only when there is no text layer) | always
+  ocr_languages: [en]
+  max_pages: 300
+  # Pre-downloaded model weights; set it to convert without a network.
+  # docling_artifacts_path: /opt/docling-models
+
 providers:
   arxiv:
     enabled: true
@@ -495,7 +551,7 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 641 tests, no network, ~21s
+.venv/bin/python -m pytest          # 659 tests, no network, ~22s
 ```
 
 Providers and models alike are exercised through recorded payloads served by
@@ -509,14 +565,19 @@ bounded recursion, every stopping rule, report traceability, budget
 enforcement, provider outage and partial failure, SSRF and prompt-injection
 defences, resuming an investigation, vault export and its escaping, corpus
 retrieval and fusion, PDF extraction and its legibility gate, local
-ingestion and the paths it refuses, and the CLI end to end.
+ingestion and the paths it refuses, the docling chain and its escalation to
+OCR, and the CLI end to end.
 
 PDFs are generated in the suite rather than checked in, which keeps them
 deterministic and lets a test ask for the awkward cases on purpose:
 compressed or not, real text or unmappable two-byte font codes. The
 optional pypdf dependency is exercised both ways - the built-in reader is
 tested with the import forced to fail, so the suite does not quietly stop
-covering it once pypdf is installed.
+covering it once pypdf is installed. Docling is never actually run: it
+downloads model weights and takes tens of seconds per document, so what the
+suite tests is the wiring - when it is asked, what is done with what it
+returns, and what happens when it is absent or fails. The suite passes
+identically with it installed and without it.
 
 ## Status
 
@@ -534,6 +595,7 @@ covering it once pypdf is installed.
 | Obsidian export | done |
 | Corpus retrieval (lexical + graph, vectors optional) | done |
 | Local document ingestion, PDF extraction | done |
+| Docling: layout, tables, Office formats, OCR | done, opt-in |
 
 Reddit is deliberately absent from the social sources: its API requires
 registered OAuth credentials and its terms restrict what may be stored and
@@ -542,6 +604,5 @@ ready for it where an operator has the standing to use it.
 
 What would come next, in order: a sandboxed data-analysis capability with
 explicit inputs and outputs (the one place the non-goals leave room for
-execution), transcript evidence for video, OCR for scanned PDFs (the one
-case ingestion currently refuses rather than guesses at), and per-provider
-adaptive pacing rather than one global rate limit.
+execution), transcript evidence for video, and per-provider adaptive pacing
+rather than one global rate limit.

@@ -24,6 +24,13 @@ dev = [
 pdf = [
     "pypdf>=4.0",
 ]
+# Layout analysis, table structure, Word/PowerPoint/Excel, and OCR for
+# scans. A large dependency (it brings torch) that downloads model weights
+# on first use, which is why it is an extra and off by default - see
+# research/normalize/docling_reader.py.
+docling = [
+    "docling>=2.0",
+]
 
 [project.scripts]
 research = "research.cli.main:main"

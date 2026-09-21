@@ -21,6 +21,7 @@ from research.models.common import (
 from research.models.evidence import EvidenceDocument
 from research.models.query import ResearchQuery, SearchHit
 from research.normalize.html import ExtractedPage, extract_page
+from research.normalize.docling_reader import DoclingConverter
 from research.normalize.pdf import extract_pdf
 from research.normalize.text import clean_text
 from research.normalize.urls import canonicalize_url
@@ -41,9 +42,15 @@ class DirectFetchSource(SourceAdapter):
         client: SafeHttpClient,
         *,
         max_text_characters: int = 400_000,
+        docling: DoclingConverter | None = None,
+        ocr: str = "off",
     ) -> None:
         self.client = client
         self.max_text_characters = max_text_characters
+        #: Set when an operator has enabled Docling, so a filing published
+        #: as a scan is readable over HTTP as well as from disk.
+        self.docling = docling
+        self.ocr = ocr
 
     def capabilities(self) -> SourceCapabilities:
         return SourceCapabilities(
@@ -163,7 +170,12 @@ class DirectFetchSource(SourceAdapter):
         noise: the acquisition layer records a fetch that produced nothing,
         which is true, instead of storing a document nobody can read.
         """
-        extracted = extract_pdf(response.content)
+        extracted = extract_pdf(
+            response.content,
+            filename=response.final_url.rsplit("/", 1)[-1] or "document.pdf",
+            docling=self.docling,
+            ocr=self.ocr,
+        )
         page = ExtractedPage(
             title=extracted.title,
             text=clean_text(extracted.text)[: self.max_text_characters],
@@ -171,6 +183,10 @@ class DirectFetchSource(SourceAdapter):
         )
         page.meta["pdf_pages"] = str(extracted.pages)
         page.meta["pdf_extractor"] = extracted.method
+        if extracted.tables:
+            page.meta["pdf_tables"] = str(extracted.tables)
+        if extracted.title_source:
+            page.meta["pdf_title_source"] = extracted.title_source
         if extracted.warnings:
             page.meta["pdf_warnings"] = "; ".join(extracted.warnings)
         return page

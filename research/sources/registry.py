@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from research.config import ResearchConfig
+from research.normalize.docling_reader import converter_for
 from research.models.common import SourceFamily
 from research.sources.arxiv import ArxivSource
 from research.sources.base import CitationSource, ResearchSource, SourceCapabilities
@@ -189,7 +190,10 @@ def build_registry(
 
     if config.is_enabled("fetch"):
         fetcher = DirectFetchSource(
-            client, max_text_characters=config.acquisition.max_text_characters
+            client,
+            max_text_characters=config.acquisition.max_text_characters,
+            docling=converter_for(config.ingest),
+            ocr=config.ingest.ocr,
         )
         registry.register(fetcher)
         registry.fetcher = fetcher

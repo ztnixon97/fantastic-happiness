@@ -29,6 +29,9 @@ from __future__ import annotations
 import re
 import zlib
 from dataclasses import dataclass, field
+from typing import Callable
+
+from research.normalize.docling_reader import DoclingConverter
 
 #: Content streams beyond this are truncated rather than decompressed
 #: indefinitely - a decompression bomb is a real thing in this format.
@@ -55,7 +58,11 @@ class PdfText:
     #: "pypdf", "builtin", or "none" when nothing legible came out.
     method: str = "none"
     title: str | None = None
+    #: Where the title came from, when a reader inferred rather than read it.
+    title_source: str | None = None
     authors: list[str] = field(default_factory=list)
+    #: Tables recognised as tables, when the reader can do that at all.
+    tables: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -88,11 +95,79 @@ def looks_like_prose(text: str, *, minimum: int = 40) -> bool:
     return plausible / len(words) >= 0.35
 
 
-def extract_pdf(data: bytes) -> PdfText:
-    """Read a PDF's text, preferring a real parser when one is installed."""
+def is_noise(text: str) -> bool:
+    """Whether text is long enough to judge *and* reads as garbage.
+
+    The distinction matters: a two-line document is not noise, it is short,
+    and discarding it because a heuristic cannot grade it would lose a real
+    record. Only text that gives the gate enough to work with, and fails, is
+    thrown away.
+    """
+    stripped = text.strip()
+    if len(stripped) < 40:
+        return False
+    return not looks_like_prose(stripped)
+
+
+def extract_pdf(
+    data: bytes,
+    *,
+    filename: str = "document.pdf",
+    docling: DoclingConverter | None = None,
+    ocr: str = "off",
+) -> PdfText:
+    """Read a PDF's text, escalating only as far as it has to.
+
+    The chain, in order, stopping at the first attempt that reads as prose:
+
+    1. Docling without OCR, when an operator has enabled it - it does layout
+       and tables, which the built-in readers do not.
+    2. pypdf, then the built-in reader. These need nothing installed, and on
+       a PDF with a text layer they are the difference between milliseconds
+       and tens of seconds.
+    3. Docling *with* OCR, when ``ocr`` allows it. This is the escalation
+       that reads a scan, and the legibility gate below is what decides a
+       scan is what this is - an earlier step producing nothing readable is
+       precisely the signal that there is no text layer to read.
+
+    ``ocr="always"`` puts the OCR pass first instead, for a corpus known to
+    be scanned; ``ocr="off"`` never runs it at all.
+    """
     if not data.startswith(b"%PDF"):
         return PdfText(warnings=["not a PDF: the file does not start with %PDF"])
 
+    attempts: list[Callable[[], PdfText | None]] = []
+    if docling is not None and ocr == "always":
+        attempts.append(lambda: _with_docling(docling, data, filename, ocr=True))
+    elif docling is not None:
+        attempts.append(lambda: _with_docling(docling, data, filename, ocr=False))
+    attempts.append(lambda: _without_dependencies(data))
+    if docling is not None and ocr == "auto":
+        attempts.append(lambda: _with_docling(docling, data, filename, ocr=True))
+
+    warnings: list[str] = []
+    best: PdfText | None = None
+    for attempt in attempts:
+        result = attempt()
+        if result is None:
+            continue
+        warnings.extend(warning for warning in result.warnings if warning not in warnings)
+        if result.text and looks_like_prose(result.text):
+            result.warnings = warnings
+            return result
+        if best is None or len(result.text) > len(best.text):
+            best = result
+
+    if best is not None and best.text.strip() and not is_noise(best.text):
+        # Legible, just too short for the gate to vouch for. A two-line
+        # notice is a document; refusing it would lose a real record.
+        best.warnings = warnings
+        return best
+    return _refused(best, warnings, docling=docling, ocr=ocr)
+
+
+def _without_dependencies(data: bytes) -> PdfText:
+    """pypdf if it is installed, otherwise the built-in reader."""
     result = _with_pypdf(data)
     if result is None or not result.text.strip():
         # pypdf is stricter about file structure than this format is in
@@ -108,25 +183,84 @@ def extract_pdf(data: bytes) -> PdfText:
             f"{dropped} characters had no text meaning and were dropped; the "
             "document uses font encodings this reader cannot fully map"
         )
-
-    if result.text and not looks_like_prose(result.text):
-        return PdfText(
-            pages=result.pages,
-            method="none",
-            title=result.title,
-            warnings=[
-                *result.warnings,
-                "extracted text is not legible - the PDF is probably scanned, or "
-                "uses embedded font encodings the built-in reader cannot map. "
-                "Install the 'pdf' extra (pypdf) for these documents.",
-            ],
-        )
-    if not result.text:
-        result.warnings.append("no text could be extracted; the PDF may be a scan")
     return result
 
 
+def _with_docling(
+    converter: DoclingConverter, data: bytes, filename: str, *, ocr: bool
+) -> PdfText | None:
+    converted = converter(data, filename, ocr=ocr)
+    if converted is None:
+        return None
+    text, dropped = scrub(converted.text)
+    warnings = list(converted.warnings)
+    if dropped:
+        warnings.append(f"{dropped} characters had no text meaning and were dropped")
+    return PdfText(
+        text=text,
+        pages=converted.pages,
+        method=converted.method,
+        title=converted.title,
+        warnings=warnings,
+        tables=converted.tables,
+        title_source=converted.title_source,
+    )
+
+
+def _refused(
+    best: PdfText | None,
+    warnings: list[str],
+    *,
+    docling: DoclingConverter | None,
+    ocr: str,
+) -> PdfText:
+    """Nothing legible came out. Say so, and say what would fix it.
+
+    Illegible text is the dangerous outcome, not the empty one: noise looks
+    like text to everything downstream, so it would be stored as evidence,
+    indexed and quoted. It is discarded rather than passed on.
+    """
+    if best is None:
+        return PdfText(method="none", warnings=[*warnings, "no reader could open this PDF"])
+    if not best.text:
+        return PdfText(
+            pages=best.pages,
+            method="none",
+            title=best.title,
+            warnings=[*warnings, "no text could be extracted; the PDF may be a scan"],
+        )
+    if docling is None and not _pypdf_installed():
+        remedy = (
+            "install the 'pdf' extra (pypdf), which maps the font encodings the "
+            "built-in reader cannot"
+        )
+    elif docling is None:
+        remedy = (
+            "enable docling (the 'docling' extra) to read it with layout analysis, "
+            "and OCR if it is a scan"
+        )
+    elif ocr == "off":
+        remedy = "this looks like a scan; set ingest.ocr to auto to read it"
+    else:
+        remedy = "OCR could not read it either; the pages may be blank or unreadable"
+    return PdfText(
+        pages=best.pages,
+        method="none",
+        title=best.title,
+        warnings=[*warnings, f"extracted text is not legible - {remedy}"],
+    )
+
+
 # -- pypdf ---------------------------------------------------------------
+def _pypdf_installed() -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("pypdf") is not None
+    except (ImportError, ValueError):  # pragma: no cover - broken installs
+        return False
+
+
 def _with_pypdf(data: bytes) -> PdfText | None:
     """Extract with pypdf, or return None when it is not installed."""
     try:
