@@ -708,3 +708,107 @@ class TestWorkerResilience:
         assert outcome.status is TaskStatus.FAILED
         assert "RuntimeError" in outcome.stopped_by
         assert store.tasks.get(task.id).error
+
+
+class TestClarification:
+    """Asking about the question before planning against it."""
+
+    def _clarifier(self, replies, store=None, investigation=None):
+        from research.agents.clarifier import Clarifier
+        from research.budgets import BudgetLedger
+        from research.config import BudgetPolicy
+
+        ledger = (
+            BudgetLedger(store.budget, investigation.id, BudgetPolicy())
+            if store is not None
+            else None
+        )
+        return Clarifier(ScriptedModel(replies), ledger=ledger)
+
+    async def test_a_vague_question_gets_questions_back(self) -> None:
+        clarifier = self._clarifier([
+            json.dumps({"questions": [
+                {"question": "Economic against which alternative?",
+                 "why": "it decides what the comparison searches for",
+                 "suggestion": "combined-cycle gas"},
+                {"question": "Over what horizon?", "why": "it decides the date filter"},
+            ]})
+        ])
+        clarification = await clarifier.ask("Are SMRs economic?")
+        assert [q.question for q in clarification.questions] == [
+            "Economic against which alternative?", "Over what horizon?",
+        ]
+        assert clarification.questions[0].suggestion == "combined-cycle gas"
+
+    async def test_a_clear_question_gets_none(self) -> None:
+        """Asking nothing is a valid answer, and the common one."""
+        clarifier = self._clarifier([json.dumps({"questions": []})])
+        clarification = await clarifier.ask(
+            "Did the NRC approve the NuScale design in 2023?"
+        )
+        assert clarification.questions == []
+        assert clarification.skipped is None
+
+    async def test_more_questions_than_asked_for_are_cut(self) -> None:
+        clarifier = self._clarifier([
+            json.dumps({"questions": [{"question": f"Question {n}?"} for n in range(9)]})
+        ])
+        clarification = await clarifier.ask("Are SMRs economic?", limit=2)
+        assert len(clarification.questions) == 2
+
+    async def test_an_unusable_reply_does_not_fail_the_run(self) -> None:
+        clarifier = self._clarifier(["not json at all"])
+        clarification = await clarifier.ask("Are SMRs economic?")
+        assert clarification.questions == []
+        assert "not usable" in clarification.skipped
+
+    async def test_a_model_that_raises_does_not_fail_the_run(self) -> None:
+        from research.agents.clarifier import Clarifier
+
+        class Broken:
+            async def complete(self, messages):
+                raise RuntimeError("the provider is down")
+
+        clarification = await Clarifier(Broken()).ask("Are SMRs economic?")
+        assert "could not be asked" in clarification.skipped
+
+    async def test_it_is_charged_to_the_budget(self, store, investigation) -> None:
+        from research.budgets import Resource
+
+        clarifier = self._clarifier(
+            [json.dumps({"questions": []})], store=store, investigation=investigation
+        )
+        await clarifier.ask("Are SMRs economic?")
+        assert clarifier.ledger.used(Resource.MODEL_CALLS) == 1
+
+    async def test_an_exhausted_budget_skips_it_rather_than_raising(
+        self, store, investigation
+    ) -> None:
+        from research.budgets import BudgetLedger
+        from research.config import BudgetPolicy
+        from research.agents.clarifier import Clarifier
+
+        ledger = BudgetLedger(
+            store.budget, investigation.id, BudgetPolicy(max_model_calls=0)
+        )
+        clarification = await Clarifier(ScriptedModel(["{}"]), ledger=ledger).ask("q")
+        assert "budget" in clarification.skipped
+
+    def test_answers_become_context_for_the_planner(self) -> None:
+        from research.agents.clarifier import Clarification, ClarifyingQuestion
+
+        clarification = Clarification(questions=[
+            ClarifyingQuestion("Against which alternative?", answer="gas"),
+            ClarifyingQuestion("Over what horizon?", answer="  "),
+        ])
+        brief = clarification.brief("An existing note.")
+        assert "An existing note." in brief
+        assert "Against which alternative?" in brief and "gas" in brief
+        assert "did not answer" in brief, "an unanswered question is worth knowing"
+
+    def test_nothing_answered_leaves_the_brief_alone(self) -> None:
+        from research.agents.clarifier import Clarification, ClarifyingQuestion
+
+        clarification = Clarification(questions=[ClarifyingQuestion("Which market?")])
+        assert clarification.brief("original") == "original"
+        assert clarification.brief(None) is None

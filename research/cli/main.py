@@ -36,10 +36,12 @@ from research.models.claim import ClaimStatus, EvidenceStance
 from research.models.event import DatePrecision
 from research.normalize.html import parse_date
 from research.acquisition.ingest import LocalIngest
+from research.agents.clarifier import Clarifier
 from research.normalize.docling_reader import available as docling_available
 from research.config import DEFAULT_ROLE_TIERS
 from research.models.common import SourceFamily, SourceType
 from research.models.investigation import InvestigationStatus, StopReason
+from research.models.task import ResearchRole
 from research.normalize.text import truncate
 from research.operations.citation_chase import CitationChase
 from research.operations.claims import ClaimOperations
@@ -665,6 +667,63 @@ async def cmd_timeline(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def _clarify(
+    context: CliContext,
+    investigation: Any,
+    args: argparse.Namespace,
+    *,
+    model: Any,
+    ledger: Any,
+) -> None:
+    """Ask about the question before planning against it, where that is possible.
+
+    Skipped without ceremony when nobody is there to answer - a piped or
+    scheduled run must not block on a prompt - and recorded either way, so a
+    report can say what the run assumed.
+    """
+    if args.no_clarify or args.json:
+        return
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if not interactive:
+        context.store.investigations.update_metadata(
+            investigation.id,
+            {"clarification": {"skipped": "not an interactive terminal"}},
+        )
+        return
+
+    clarifier = Clarifier(
+        model, ledger=ledger, price=context.models().price_for(ResearchRole.PLANNER)
+    )
+    clarification = await clarifier.ask(
+        investigation.question, brief=investigation.brief, limit=args.clarify_questions
+    )
+    if clarification.skipped:
+        print(f"(not asking first: {clarification.skipped})\n")
+    elif clarification.questions:
+        print("Before planning, a few things that would change the plan.")
+        print("Press enter to skip any of them.\n")
+        for question in clarification.questions:
+            print(f"  {question.question}")
+            if question.why:
+                print(f"  ({question.why})")
+            if question.suggestion:
+                print(f"  otherwise: {question.suggestion}")
+            try:
+                question.answer = input("  > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            print()
+
+    context.store.investigations.update_metadata(
+        investigation.id, {"clarification": clarification.to_dict()}
+    )
+    brief = clarification.brief(investigation.brief)
+    if brief and brief != investigation.brief:
+        context.store.investigations.set_brief(investigation.id, brief)
+        investigation.brief = brief
+
+
 async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
     """Plan and run an investigation autonomously, within its budget."""
     if args.investigation:
@@ -683,6 +742,9 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
     except ResearchError as exc:
         print(f"no model available: {exc}", file=sys.stderr)
         return 1
+
+    if not args.investigation:
+        await _clarify(context, investigation, args, model=model, ledger=ledger)
 
     quiet = args.json
     def report(event: str, payload: dict[str, Any]) -> None:
@@ -1137,6 +1199,14 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument(
         "--concurrency", type=int, default=None,
         help="research tasks to run at once (default from config)",
+    )
+    investigate.add_argument(
+        "--no-clarify", action="store_true", dest="no_clarify",
+        help="plan against the question as typed, without asking about it first",
+    )
+    investigate.add_argument(
+        "--clarify-questions", type=int, default=3, dest="clarify_questions",
+        help="most questions to ask before planning (default 3)",
     )
     investigate.add_argument(
         "--model", choices=["auto", "offline"], default="auto",

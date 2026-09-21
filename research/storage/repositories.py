@@ -17,7 +17,7 @@ from research.models.query import ResearchQuery
 from research.models.task import ResearchTask, TaskResult, TaskStatus
 from research.normalize.fingerprint import simhash_bands
 from research.normalize.urls import url_identity_key
-from research.storage.database import Database, encode_dt, to_json
+from research.storage.database import Database, encode_dt, from_json, to_json
 from research.storage.fts import index_document
 from research.storage.rows import (
     document_to_params,
@@ -115,9 +115,31 @@ class InvestigationRepository:
         )
 
     def update_metadata(self, investigation_id: str, metadata: dict[str, Any]) -> None:
+        """Merge keys into an investigation's metadata.
+
+        Merging here rather than at each call site: every caller wanted it,
+        each was doing it by hand, and one that forgot would silently drop
+        whatever another had recorded.
+        """
+        with self.db.transaction() as connection:
+            row = connection.execute(
+                "SELECT metadata FROM investigations WHERE id = ?", (investigation_id,)
+            ).fetchone()
+            existing = from_json(row["metadata"], {}) if row else {}
+            connection.execute(
+                "UPDATE investigations SET metadata = ?, updated_at = ? WHERE id = ?",
+                (
+                    to_json({**(existing or {}), **metadata}),
+                    encode_dt(utcnow()),
+                    investigation_id,
+                ),
+            )
+
+    def set_brief(self, investigation_id: str, brief: str | None) -> None:
+        """Replace the standing context the planner reads."""
         self.db.execute(
-            "UPDATE investigations SET metadata = ?, updated_at = ? WHERE id = ?",
-            (to_json(metadata), encode_dt(utcnow()), investigation_id),
+            "UPDATE investigations SET brief = ?, updated_at = ? WHERE id = ?",
+            (brief, encode_dt(utcnow()), investigation_id),
         )
 
 

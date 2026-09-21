@@ -139,7 +139,6 @@ class Planner:
             self.store.investigations.update_metadata(
                 self.investigation_id,
                 {
-                    **investigation.metadata,
                     "plan_brief": plan.brief,
                     "planned_entities": plan.entities,
                     "claims_to_verify": plan.claims_to_verify,
