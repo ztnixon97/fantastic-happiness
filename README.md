@@ -20,33 +20,37 @@ Everything below runs offline against a bundled corpus. No API keys, no
 network.
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e '.[dev]'
-# Document conversion and the sentence encoder share a torch install, so
-# this is a few GB. Model weights download on first use, and both degrade
-# to the dependency-free readers and a lexical+graph ranking without them.
+uv sync          # one command: interpreter, dependencies, dev group, venv
 
 # An autonomous investigation: plan, work, recurse, stop. No network, no keys.
-.venv/bin/research --offline investigate "Are small modular reactors competitive for AI data centres?"
-.venv/bin/research report investigation:1 --no-summary
+uv run research --offline investigate "Are small modular reactors competitive for AI data centres?"
+uv run research report investigation:1 --no-summary
 
-.venv/bin/research demo                     # the same corpus, scripted rather than planned
-.venv/bin/research show evidence:9          # where did this come from?
-.venv/bin/research independence investigation:1
-.venv/bin/research claim new investigation:1 "SMR costs have risen above projections"
-.venv/bin/research claim link investigation:1 claim:1 evidence:8 --excerpt "The target price for power"
-.venv/bin/research claim show claim:1
-.venv/bin/research questions investigation:1
-.venv/bin/research timeline investigation:1 --publications
-.venv/bin/research graph investigation:1
-.venv/bin/research activity investigation:1
-.venv/bin/research budget investigation:1
+uv run research demo                     # the same corpus, scripted rather than planned
+uv run research show evidence:9          # where did this come from?
+uv run research independence investigation:1
+uv run research claim new investigation:1 "SMR costs have risen above projections"
+uv run research claim link investigation:1 claim:1 evidence:8 --excerpt "The target price for power"
+uv run research claim show claim:1
+uv run research questions investigation:1
+uv run research timeline investigation:1 --publications
+uv run research graph investigation:1
+uv run research activity investigation:1
+uv run research budget investigation:1
 
 # Search what the investigation already holds - no provider call, no budget.
-.venv/bin/research find investigation:1 "cost escalation"
+uv run research find investigation:1 "cost escalation"
 
 # Read your own files in as evidence: PDF, text, Markdown, HTML, JSON.
-.venv/bin/research ingest investigation:1 ./papers --type paper --family academic
+uv run research ingest investigation:1 ./papers --type paper --family academic
 ```
+
+`uv sync` installs from `uv.lock`, so every machine gets the same
+resolution. Document conversion and the sentence encoder share a torch
+install; `pyproject.toml` pins it to the CPU wheels, which is the difference
+between a 1.6GB environment and a 6.2GB one, because nothing here wants a
+CUDA runtime. Model weights download on first use, and both features degrade
+to the dependency-free readers and a lexical+graph ranking without them.
 
 `investigate` plans the work, runs specialised workers over the bundled
 corpus, turns their follow-ups into new tasks within the depth and budget
@@ -86,10 +90,10 @@ it. That distinction is the point of the system.
 Against live sources, drop `--offline`:
 
 ```bash
-.venv/bin/research new "are small modular reactors competitive for AI data centres?"
-.venv/bin/research search investigation:1 "small modular reactor levelized cost" --family academic
-.venv/bin/research search investigation:1 "NuScale project cancellation" --family news
-.venv/bin/research citations investigation:1 evidence:1 --direction both --depth 2
+uv run research new "are small modular reactors competitive for AI data centres?"
+uv run research search investigation:1 "small modular reactor levelized cost" --family academic
+uv run research search investigation:1 "NuScale project cancellation" --family news
+uv run research citations investigation:1 evidence:1 --direction both --depth 2
 ```
 
 Academic sources (OpenAlex, Crossref, arXiv, Semantic Scholar) and the GDELT
@@ -566,14 +570,23 @@ export RESEARCH_ANTHROPIC_API_KEY=...           # or RESEARCH_OPENAI_API_KEY
 export RESEARCH_CONTACT_EMAIL=you@example.org   # polite pool at OpenAlex/Crossref
 export RESEARCH_BRAVE_API_KEY=...               # optional web search
 export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
-.venv/bin/research --config research.yaml sources
+uv run research --config research.yaml sources
 ```
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 671 tests, no network, ~22s
+uv run pytest             # 674 tests, no network, no models, ~22s
+uv run pytest -m models   # 5 more that load the real stack, ~14s
 ```
+
+The default suite runs no models at all — they would need a network, a cache
+directory and a lot of CPU, and the suite would stop being deterministic. The
+cost of that is the one thing it cannot see: a broken install. A torch and
+torchvision wheel mismatch, found while moving to uv, left the embedder
+raising on every load while all 674 tests passed. The `models` marker is the
+answer — a handful of tests that load Docling and the encoder for real, run
+after changing dependencies.
 
 Providers and models alike are exercised through recorded payloads served by
 a mock transport, and the autonomous path runs against a rule-based model

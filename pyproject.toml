@@ -11,26 +11,52 @@ requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
     "pyyaml>=6.0",
-    # Document conversion: layout, tables, Office formats and OCR. It is a
-    # large install - it brings torch - and it downloads model weights on
-    # first use. It is a dependency rather than an extra because reading a
-    # scanned filing is not a niche case in research, and because the
-    # sentence encoder behind vector retrieval reuses the same stack.
+    # Document conversion: layout, tables, Office formats and OCR. A
+    # dependency rather than an extra because reading a scanned filing is
+    # not a niche case in research, and because the sentence encoder behind
+    # vector retrieval reuses the same stack.
     "docling>=2.0",
     "transformers>=4.40",
+    # Declared directly although docling would bring them, because
+    # research/retrieval/embeddings.py imports torch - and because uv only
+    # applies [tool.uv.sources] to a project's own dependencies, which is
+    # what pins these to the CPU wheels. torchvision has to come from the
+    # same index as torch: transformers imports it, and a wheel built
+    # against the CUDA build fails on the CPU one with "operator
+    # torchvision::nms does not exist".
+    "torch>=2.2",
+    "torchvision>=0.17",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-]
 # PDFs are read without it - see research/normalize/pdf.py - but pypdf
-# handles the font encodings the built-in reader cannot map, which is most
-# of what separates a readable scan of the literature from a refused one.
+# handles the font encodings docling's fallback readers cannot map.
 pdf = [
     "pypdf>=4.0",
 ]
+
+# Development lives in a dependency group rather than an extra: it is not
+# something anyone installs this package *for*, and `uv sync` installs it by
+# default without it being published as part of the distribution.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+# Torch ships CUDA by default: ~3.2GB of GPU runtime for a sentence encoder
+# and a layout model that both run on a CPU. Pinning the CPU wheels cuts the
+# install by roughly two thirds. macOS wheels on PyPI are already CPU-only,
+# and the CPU index does not carry them, so it is left alone there.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
 
 [project.scripts]
 research = "research.cli.main:main"
@@ -45,6 +71,16 @@ research = ["data/*.json", "ui/assets/*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning:research.*"]
+# The default suite runs no models: it would need a network, a cache
+# directory and a lot of CPU, and would stop being deterministic. The
+# trade-off is that it cannot notice a broken ML install - a CUDA/CPU wheel
+# mismatch let the whole suite pass with the embedder dead - so the smoke
+# tests that do load the real stack live behind this marker.
+#     uv run pytest -m models
+markers = [
+    "models: loads the real docling and embedding models; needs weights on disk or a network",
+]
+addopts = "-m 'not models'"
 
 [tool.ruff]
 line-length = 100

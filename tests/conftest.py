@@ -42,8 +42,8 @@ def isolate_environment(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def no_model_inference(monkeypatch) -> None:
-    """The suite never runs a model, whatever the defaults say.
+def no_model_inference(request, monkeypatch) -> None:
+    """The default suite never runs a model, whatever the defaults say.
 
     Docling and the sentence encoder are both on by default now, and both
     download weights on first use and take seconds to tens of seconds per
@@ -55,7 +55,14 @@ def no_model_inference(monkeypatch) -> None:
     its third opinion. Tests that need either behaviour supply a stub and
     assert on what the wiring does with it - see tests/unit/test_ingest.py
     and tests/unit/test_retrieval.py.
+
+    What that cannot catch is a broken install: a CUDA/CPU wheel mismatch
+    once left the embedder dead while every test passed. Tests marked
+    ``models`` are exempt, load the real thing, and are the answer to that.
     """
+    if request.node.get_closest_marker("models"):
+        return
+
     from research.normalize import docling_reader
     from research.retrieval import embeddings
 

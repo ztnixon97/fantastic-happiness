@@ -1,5 +1,24 @@
 # Architecture
 
+## Toolchain
+
+`uv` manages the interpreter, the dependencies and the virtualenv:
+`uv sync` for a working tree, `uv run <command>` for anything inside it.
+`uv.lock` is committed, so the resolution is the same on every machine and
+in CI.
+
+Two things it buys that are worth naming. Dev tooling lives in a
+`[dependency-groups]` entry rather than an extra, so it is installed by
+default when you sync and is not published as part of the distribution. And
+`[tool.uv.sources]` pins torch and torchvision to the CPU wheel index:
+nothing here wants a CUDA runtime, and not shipping one takes the
+environment from 6.2GB to 1.6GB. They are declared as direct dependencies
+although Docling would bring them, because uv applies sources only to a
+project's own requirements - and because torchvision must come from the same
+index as torch, or a wheel built against the CUDA build fails on the CPU one
+with `operator torchvision::nms does not exist`. That failure is how this
+was found.
+
 ## Layering
 
 ```
