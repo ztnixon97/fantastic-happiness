@@ -1,4 +1,11 @@
-# What comparable tools do, and what this one is missing
+# What comparable tools do, and what this one was missing
+
+> **Status, after this survey.** All eight gaps below have been addressed.
+> Each section now ends with what was built, and the sections are left as
+> written so the reasoning survives alongside the outcome. The one
+> genuinely load-bearing correction: building the evaluation harness
+> found that graph expansion was making every ranking *worse*, which no
+> amount of argument had revealed.
 
 Surveyed 2026-09-21 by reading the repositories and docs directly: gpt-researcher,
 STORM/Co-STORM, PaperQA2, langchain-ai/open_deep_research, langchain-ai/local-deep-researcher,
@@ -82,6 +89,13 @@ number — so the choice is ours. LitQA2 fits the academic path; 2WikiMultiHopQA
 is cheap and mostly offline; a claim-verification set would test what is actually
 distinctive here.
 
+**Built.** `research measure` scores retrieval (twelve judged queries, per-retriever
+ablations), independence (twelve judged pairs), and a whole run's record. It
+immediately found that graph expansion was costing mean reciprocal rank
+1.00 → 0.79, traced it to reciprocal rank fusion discarding BM25 scores over
+an unfiltered result tail, and then chose the cutoff that fixes it by
+measurement rather than by argument. Numbers are in `docs/architecture.md`.
+
 ### 2. Evidence is read as "the first 4000 characters", not as the relevant passage
 
 `_do_get_evidence` returns `as_external_evidence(document, limit=characters)` — the head
@@ -108,6 +122,13 @@ Worth noting: **no tool in the survey defaults to a named cross-encoder** (bge-r
 Cohere Rerank). The field reranks with LLM calls or with fusion. Our RRF is in line with
 the better half.
 
+**Built.** `research/retrieval/passages.py` ranks a document's own passages
+against the question, reusing BM25 and vectors fused by RRF. Passages are
+verbatim slices with offsets, so a quotation from one still passes the
+excerpt check, and the envelope says how much was omitted. On the real
+40,000-character *Attention Is All You Need*, asking for the per-layer
+complexity returns Table 1 at character 14,611.
+
 ### 3. The scheduler is strictly sequential
 
 `research/orchestration/scheduler.py` runs one task at a time — one `await worker.run(task)`
@@ -119,6 +140,11 @@ in a loop. Five surveyed tools fan out with an explicit concurrency knob:
 Our tasks are independent by construction and the budget ledger is already durable and
 centralised, so this is mostly a scheduler change. It is the difference between a
 five-minute run and a twenty-minute one.
+
+**Built.** Bounded fan-out with `max_concurrent_tasks` (default 4).
+`claim_pending` selects and marks running together so a batch cannot hand
+one task to two workers, and a task that fails does not discard its
+batch-mates' work.
 
 ### 4. One model does every job
 
@@ -134,6 +160,10 @@ five-minute run and a twenty-minute one.
 We have roles already — planner, scout, academic, skeptic, synthesizer — so this is
 config plus a lookup, and it is where the cost savings are.
 
+**Built.** `fast` and `strategic` tiers over the default, with a `roles` map.
+Planning and synthesis get the strategic tier; gathering gets fast; skeptics
+stay on the default, because attacking a conclusion is not grunt work.
+
 ### 5. No clarification before a run starts
 
 `research investigate` goes straight from question to plan. Three tools ask first:
@@ -146,12 +176,21 @@ discovered by the retriever but not directly used in previous turns".
 A research question is usually underspecified. Asking two questions up front is cheap
 and changes what gets planned.
 
+**Built.** `research/agents/clarifier.py` asks at most a few questions, and
+often none. Answers become context for the planner, never evidence. A piped
+or scheduled run skips it and records that it did.
+
 ### 6. Cost is counted in tokens, not money
 
 `Resource.TOKENS` and `Resource.MODEL_CALLS` exist; there is no currency. gpt-researcher
 tracks per-run cost including embeddings, PaperQA2 gets it via LiteLLM and ships
 `tier1_limits`…`tier5_limits` presets matching OpenAI rate tiers, and open_deep_research
 publishes cost per benchmark run. Pricing is a table and a multiply; the counters exist.
+
+**Built.** Input and output tokens counted separately and priced per million,
+charged through one entry point, with `max_cost` as a budget. Prices come
+from configuration and there is no built-in table: a stale price reported as
+this run's cost would be a fabricated figure.
 
 ### 7. MCP
 
@@ -164,13 +203,33 @@ Our `ResearchSource` protocol is the right shape for it — an MCP server would 
 adapter behind `search`/`fetch`/`capabilities`. Worth doing when a specific server is
 wanted, not before.
 
+**Built, with one deliberate limit.** `research/sources/mcp.py` presents an
+MCP server as a source behind the existing protocol, so the action vocabulary
+does not grow by a verb. HTTP servers only: the usual stdio transport means
+launching a server named in a config file as a subprocess, which is exactly
+what "the research loop has no shell" exists to prevent. Run the server
+yourself and point at its address; what crosses into the process is then a
+network response, behind the same SSRF guard as every other provider.
+
 ### 8. Export beyond Markdown
 
 gpt-researcher does PDF and Word. SurfSense — which pivoted in 2026 to a local-first
 desktop app explicitly against NotebookLM — does pptx, docx, xlsx, self-contained HTML,
 typeset PDF, flashcards, quizzes, mind maps and an offline podcast via Kokoro-82M.
 Everyone else emits Markdown. We have Markdown and an Obsidian vault, which is better
-than most. Low priority.
+than most.
+
+**Deliberately not built.** This is the one gap left open, and the reasoning is
+worth stating rather than leaving as an omission. The Obsidian export already
+carries the thing that matters and that a .docx cannot: identifiers that
+resolve, frontmatter a query can read, and a graph you can walk from a claim
+to the evidence behind it. A Word file of the same report is a flattened
+copy — every claim identifier becomes text, and the provenance stops being
+followable. Pandoc converts the Markdown for anyone who needs to hand a file
+to somebody, without this system growing a document-layout dependency to do
+badly what a converter does well. If it turns out that what people actually
+want is to send a report to somebody who will never open the store, that is a
+good reason to revisit; wanting parity with a feature list is not.
 
 ## What nobody has
 
@@ -187,16 +246,20 @@ not built.
 **A result cache keyed on query or URL.** Nobody has one. PaperQA2's document index is the
 closest analogue and it caches documents, not searches.
 
-## What I would do first
+## What is next
 
-1. **An evaluation harness**, because everything else is unmeasurable without it, and
-   because the questions it would answer — how many loops, how much budget, do vectors
-   earn their place — are ones we currently answer by argument.
-2. **Passage-level evidence retrieval**, because reading the first 4000 characters of a
-   filing is the weakest link in an otherwise careful evidence chain, and the retrieval
-   machinery is already there.
-3. **Parallel task execution**, because it is mostly mechanical and the runs are slow.
-4. **Per-role models**, because it is cheap in both senses.
+The catching-up is done. What remains is the thing nothing in the survey can do:
+**re-run and diff** — ask the same question again and report which claims gained
+support, which were contradicted, and what is newly retracted. The state it needs
+already exists; no tool in the web-agent tier could build it without first building
+a store.
 
-Then, as a differentiator rather than catching up: **re-run and diff**, which nothing in
-this survey can do.
+Two measured weaknesses are better next work than any new feature, because they
+are now numbers rather than hunches:
+
+- **Independence recall is 0.60**, precision 1.00. It never merges two real
+  sources; it misses derived articles — a piece written from a wire report,
+  and a press release behind the story that quotes it.
+- **The retrieval corpus is fifteen documents.** The numbers compare
+  configurations against each other and nothing else. A larger judged set is
+  what would make them mean more.

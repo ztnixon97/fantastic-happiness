@@ -212,6 +212,37 @@ never arrive as text, so a page cannot address the model simply by being
 found. A worker reads a document only by asking for it, and gets it back
 wrapped as labelled external evidence.
 
+### Running tasks at once
+
+Tasks are independent by construction, so the scheduler claims a batch and
+runs it with `asyncio.gather`, bounded by `max_concurrent_tasks`.
+`claim_pending` selects and marks running inside one transaction, so a batch
+cannot hand the same task to two workers.
+
+Two consequences are deliberate and written down on the setting. The stopping
+rules are evaluated between batches rather than between tasks, so a run can
+overshoot by up to the concurrency. And when one task in a batch hits the
+budget or a model error, its batch-mates are still recorded before the run
+ends: work that happened should not vanish because a sibling failed.
+
+### Which model does what
+
+`ModelSettings` carries a default plus `fast` and `strategic` tiers, and a
+`roles` map from role to tier. Planning and synthesis decide the shape of a
+whole investigation and are called a handful of times; gathering is called
+constantly and mostly picks the next search. Skeptics stay on the default
+tier, because attacking a conclusion is not grunt work. `ModelPool` builds one
+client per tier on demand, and with nothing configured every role resolves to
+one model.
+
+Cost is counted through a single `ledger.charge_model`, which records the
+call, the input and output tokens, and the money - so the counters cannot
+disagree. There is no built-in price table: published prices change, vary by
+tier and region, and a stale number reported as this run's cost would be a
+fabricated figure in a system whose entire point is not fabricating figures.
+Prices come from configuration, and `research budget` names the model it could
+not price rather than printing a zero that reads as free.
+
 ### Bounding recursion
 
 Three limits, because any one alone fails:
@@ -342,6 +373,26 @@ response already contains the record. Web and news hits are pointers: their
 snippets are written by the search engine, not the publisher, so a result
 whose body cannot be fetched is recorded as unretrieved rather than stored as
 evidence.
+
+### MCP servers
+
+An MCP server that exposes a search tool is a provider, so it lives behind
+`ResearchSource` like any other and the action vocabulary does not grow by a
+verb. `research/sources/mcp.py` implements the JSON-RPC subset a source needs
+- `initialize`, `tools/list`, `tools/call` - over Streamable HTTP, and finds
+the search tool from the server's own schema or from a name in configuration.
+
+**HTTP only, and that is the interesting part.** The usual MCP transport is
+stdio, where the client launches the server as a child process. This system
+does not do that: the research loop has no shell, a test asserts that nothing
+in the package spawns a process, and reading a program path out of a config
+file and running it is precisely what that rule exists to prevent. An operator
+who wants a stdio server runs it themselves and points at its address. What
+then crosses into this process is a network response, behind the same SSRF
+guard, content-type allowlist, size cap and pacing as every other provider.
+
+A server answering in prose rather than JSON has its text kept as one hit
+rather than parsed into fields it did not send.
 
 ### Adding a source
 
@@ -656,6 +707,75 @@ Fetching PDFs over HTTP is the same extraction behind the content-type
 allowlist, which now admits `application/pdf`. A PDF is read, never run: it
 can carry JavaScript, embedded files and launch actions, and the reader takes
 bytes out of content streams and ignores every other structure in the file.
+
+## Measuring it
+
+`research measure` is what stops the constants in this system from being
+opinions. It runs offline and deterministically, and it scores three things:
+
+**Retrieval.** Twelve hand-judged queries over the bundled fifteen-document
+corpus, scored once per combination of retrievers. The ablation is the
+point. Today:
+
+| retrievers | recall@5 | recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- |
+| lexical | 0.931 | 1.000 | 1.000 | 0.941 |
+| lexical+graph | 0.972 | 1.000 | 1.000 | 0.950 |
+
+Fifteen documents is small. These numbers compare configurations against
+each other; they are not comparable with a published leaderboard, and the
+harness says so where it prints them.
+
+**Independence.** Twelve hand-judged pairs, with "not independent" as the
+positive class because that is the judgement with consequences. Precision
+1.00, recall 0.60: it never merges two real sources, and it misses derived
+articles - a piece written from a wire report, a press release behind the
+story. Both error directions are counted separately because a false positive
+understates the evidence and a false negative inflates it, and those are not
+the same mistake.
+
+**A whole run**, measured by what it left behind rather than by a judge
+grading prose: claims with independent support, claims reaching a primary
+record, excerpts that verify, the stopping reason, tokens and cost. One
+number there has only one acceptable value - `unverifiable_excerpts` must be
+empty, because a quotation that does not appear in its document is refused at
+write time, so a non-zero count is a broken guarantee rather than poor
+research.
+
+### What the first run found
+
+Graph expansion was making every ranking worse: mean reciprocal rank 1.00
+without it, 0.79 with it. Three things were wrong, and the harness was what
+separated them from each other.
+
+Two were straightforward. Graph hits were scored without regard to which seed
+reached them, so a neighbour of the weakest lexical hit counted as much as a
+neighbour of the best; they are now weighted by seed rank. And expansion
+followed `copy` edges, so a copy of a document the query already matched
+could take the top of the ranking from a direct match - while the ranking
+folds copies away downstream anyway. `copy` is no longer in the default
+relations.
+
+The third was the real cause, and not what the first two guesses said it was.
+FTS5 in "any" mode returns every document containing any term, so a twelve
+word question matches most of a small corpus, and BM25 separated the real
+matches from the incidental ones by a factor of twenty-eight - 7.31 against
+0.258 on one query. Reciprocal rank fusion then throws those scores away and
+keeps only positions. A document that matched on one stray word sat at "rank
+6", close enough to rank 1 under RRF that any second signal lifted it over a
+direct match.
+
+So the fix is not the graph weight and not `k`: it is that a retriever should
+return its matches, not its corpus in order. `MIN_SCORE_RATIO` drops hits
+scoring below 5% of the best hit, and the harness chose that number - 0.05 is
+the largest cutoff that costs no lexical recall, and exactly where graph
+expansion flips from harmful to helpful. There is a regression test asserting
+it never goes back.
+
+The general lesson is worth keeping: **RRF is rank-only, so every ranker it
+fuses must be one whose ranks all mean something.** A retriever with a long
+tail of near-zero matches violates that, and the failure shows up as a
+mysterious loss of precision in whatever is fused with it.
 
 ## Export
 

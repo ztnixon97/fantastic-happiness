@@ -100,6 +100,9 @@ class AcquisitionPolicy:
         "text/xml",
         "application/atom+xml",
         "application/rss+xml",
+        # Streamable HTTP, which is how an MCP server answers. It is line
+        # oriented text carrying JSON, read as data like everything else.
+        "text/event-stream",
     )
     #: A ``Retry-After`` longer than this means "not now, and not soon": the
     #: request fails immediately instead of sleeping. Providers really do ask
@@ -369,6 +372,39 @@ class IngestSettings:
         return cls(**known)
 
 
+
+@dataclass(frozen=True, slots=True)
+class McpServer:
+    """One MCP server this investigation may use as a source.
+
+    ``url`` is an address, never a command: this system does not launch an
+    MCP server as a subprocess. Run the server yourself and point at it.
+    """
+
+    url: str
+    name: str = "mcp"
+    family: str = "web"
+    source_type: str = "web_page"
+    #: Name the tool explicitly when the server's is not called something
+    #: obvious; otherwise it is found by name from what the server offers.
+    search_tool: str | None = None
+    fetch_tool: str | None = None
+    #: Which credential to send as a bearer token, from the same allowlist
+    #: as every other provider. Never a literal secret in the config file.
+    credential: str | None = None
+    enabled: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "McpServer":
+        known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}
+        if "url" not in known:
+            raise ConfigError("an mcp server needs a url; this system will not start one")
+        return cls(**known)
+
+
 @dataclass(slots=True)
 class ResearchConfig:
     budget: BudgetPolicy = field(default_factory=BudgetPolicy)
@@ -377,6 +413,7 @@ class ResearchConfig:
     retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
     ingest: IngestSettings = field(default_factory=IngestSettings)
     providers: dict[str, ProviderSettings] = field(default_factory=dict)
+    mcp_servers: list[McpServer] = field(default_factory=list)
     database_path: str | None = None
     contact_email: str | None = None
     #: Resolved provider credentials. Populated only from PROVIDER_KEY_ENV.
@@ -404,6 +441,7 @@ class ResearchConfig:
             "model": self.model.to_dict(),
             "retrieval": self.retrieval.to_dict(),
             "ingest": self.ingest.to_dict(),
+            "mcp_servers": [server.to_dict() for server in self.mcp_servers],
             "providers": {
                 name: {
                     "enabled": settings.enabled,
@@ -463,6 +501,9 @@ def load_config(
     model = ModelSettings.from_dict(data.get("model", {}))
     retrieval = RetrievalSettings.from_dict(data.get("retrieval", {}))
     ingest = IngestSettings.from_dict(data.get("ingest", {}))
+    mcp_servers = [
+        McpServer.from_dict(entry) for entry in (data.get("mcp_servers") or [])
+    ]
 
     providers: dict[str, ProviderSettings] = {}
     for name, raw in (data.get("providers") or {}).items():
@@ -497,6 +538,7 @@ def load_config(
         model=model,
         retrieval=retrieval,
         ingest=ingest,
+        mcp_servers=mcp_servers,
         providers=providers,
         database_path=data.get("database_path"),
         contact_email=contact,

@@ -20,7 +20,8 @@ from typing import Any, Iterable
 
 from research.config import ResearchConfig
 from research.normalize.docling_reader import converter_for
-from research.models.common import SourceFamily
+from research.sources.mcp import McpSource
+from research.models.common import SourceFamily, SourceType
 from research.sources.arxiv import ArxivSource
 from research.sources.base import CitationSource, ResearchSource, SourceCapabilities
 from research.sources.crossref import CrossrefSource
@@ -198,9 +199,40 @@ def build_registry(
         registry.register(fetcher)
         registry.fetcher = fetcher
 
+    for server in config.mcp_servers:
+        if not server.enabled:
+            continue
+        key = config.secret(server.credential) if server.credential else None
+        registry.register(
+            McpSource(
+                client,
+                url=server.url,
+                name=server.name,
+                family=_family(server.family),
+                source_type=_source_type(server.source_type),
+                search_tool=server.search_tool,
+                fetch_tool=server.fetch_tool,
+                headers={"authorization": f"Bearer {key}"} if key else None,
+            )
+        )
+
     for source in extra_sources:
         registry.register(source)
         if isinstance(source, DirectFetchSource) and registry.fetcher is None:
             registry.fetcher = source
 
     return registry
+
+
+def _family(name: str) -> SourceFamily:
+    try:
+        return SourceFamily(name)
+    except ValueError:
+        return SourceFamily.WEB
+
+
+def _source_type(name: str) -> SourceType:
+    try:
+        return SourceType(name)
+    except ValueError:
+        return SourceType.WEB_PAGE

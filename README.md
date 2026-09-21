@@ -41,6 +41,9 @@ uv run research budget investigation:1
 # Search what the investigation already holds - no provider call, no budget.
 uv run research find investigation:1 "cost escalation"
 
+# Measure it: retrieval, source independence, and a whole run's record.
+uv run research measure
+
 # Read your own files in as evidence: PDF, text, Markdown, HTML, JSON.
 uv run research ingest investigation:1 ./papers --type paper --family academic
 ```
@@ -249,7 +252,16 @@ before it starts, and records which one stopped it. A cited work that has not
 been fetched is stored as an unresolved edge — the frontier is visible
 without spending anything to look at it.
 
-**Autonomy with limits.** A planner decomposes the question into tasks;
+**Asking first.** A run may ask a few clarifying questions before planning —
+which alternative a comparison is against, over what horizon — and often asks
+none, because a well-posed question needs none. Answers become context for
+the planner, never evidence. A piped or scheduled run skips it and records
+that it did.
+
+**Autonomy with limits.** Tasks run several at a time, on models chosen per
+role: planning and synthesis get the strategic tier, gathering gets the fast
+one, skeptics stay on the default because attacking a conclusion is not grunt
+work. A planner decomposes the question into tasks;
 specialised workers — scout, academic, news, primary-source, social, skeptic —
 each get the slice of the action vocabulary their role needs, and a worker
 that finds a lead worth its own work delegates it. Recursion is bounded three
@@ -461,14 +473,44 @@ conversion means model inference, with OCR native image decoders too, over
 external documents; that is a larger attack surface than a regular
 expression over a content stream, and turning it off is a setting.
 
+**Measured, not argued.** `research measure` scores three things offline and
+deterministically: retrieval, as twelve hand-judged queries with a
+per-retriever ablation; source independence, as twelve hand-judged document
+pairs; and a whole run, by the record it left rather than by a judge grading
+its prose.
+
+```
+$ uv run research measure retrieval
+RETRIEVERS     RECALL_AT_5  RECALL_AT_10  MRR  NDCG_AT_10
+lexical        0.9306       1.0           1.0  0.9413
+lexical+graph  0.9722       1.0           1.0  0.9498
+```
+
+It paid for itself on the first run. Graph expansion was making every
+ranking *worse* — mean reciprocal rank 1.00 without it, 0.79 with it — and
+the cause was not where the first two guesses put it. FTS5 returns every
+document containing any term, BM25 separated real matches from incidental
+ones by 28×, and reciprocal rank fusion throws those scores away and keeps
+only positions: a document matching on one stray word sat at "rank 6", close
+enough under RRF that any second signal lifted it over a direct match. A
+retriever should return its matches, not its corpus in order. The cutoff that
+fixes it was chosen by sweeping it against the query set, not by argument.
+`docs/architecture.md` has the detail.
+
+Independence scores precision 1.00, recall 0.60: it never merges two real
+sources, and it misses derived articles. That is a number to improve rather
+than a claim to make, which is the point of having it.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
 store. `research show <id>` prints the chain.
 
 **Budgets.** Depth, tasks, searches, documents (globally and per family),
-citation depth and documents, provider calls, model calls, tokens, failed
-source calls and runtime. Counters are durable, so a resumed investigation
+citation depth and documents, provider calls, model calls, tokens, money,
+failed source calls and runtime. Cost is counted only for models the config
+has priced — there is no built-in price table, because a stale price reported
+as this run's cost would be a fabricated figure. Counters are durable, so a resumed investigation
 continues spending the allowance it started with rather than a fresh one.
 Research should terminate because it decided to, not because a context
 window filled up.
@@ -551,6 +593,26 @@ retrieval:
   embedding_model: sentence-transformers/all-MiniLM-L6-v2
   # embedding_model_path: /opt/models/minilm   # weights already on disk
 
+model:
+  # Tiers, so the planner need not share the gatherers' model. Omit them and
+  # every role uses `model` above.
+  fast: gpt-4.1-mini
+  strategic:
+    model: claude-opus-5
+    max_tokens: 8192
+  max_concurrent_tasks: 4
+  # No built-in price table: a stale price reported as this run's cost would
+  # be a fabricated figure. (input, output) per million tokens.
+  prices:
+    claude-sonnet-5: [3.0, 15.0]
+
+# MCP servers are addresses, never commands: this system will not start one.
+mcp_servers:
+  - name: house_index
+    url: https://mcp.internal.example/mcp
+    family: corporate
+    credential: house_index   # a name in the allowlist, never a literal key
+
 ingest:
   # Docling reads documents; the built-in readers are the fallback.
   docling_enabled: true
@@ -578,7 +640,7 @@ uv run research --config research.yaml sources
 ## Tests
 
 ```bash
-uv run pytest             # 674 tests, no network, no models, ~22s
+uv run pytest             # 787 tests, no network, no models, ~23s
 uv run pytest -m models   # 5 more that load the real stack, ~14s
 ```
 
@@ -635,6 +697,10 @@ identically with them installed and without them.
 | Local document ingestion, PDF extraction | done |
 | Docling: layout, tables, Office formats, OCR | done, default |
 | Vector retrieval, local encoder | done, default |
+| Per-role models, cost in money, parallel tasks | done |
+| Passage-level evidence, clarifying questions | done |
+| Evaluation harness (`research measure`) | done |
+| MCP servers as sources | done, HTTP only |
 
 Reddit is deliberately absent from the social sources: its API requires
 registered OAuth credentials and its terms restrict what may be stored and
