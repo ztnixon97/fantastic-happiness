@@ -248,11 +248,12 @@ closest analogue and it caches documents, not searches.
 
 ## What is next
 
-The catching-up is done. What remains is the thing nothing in the survey can do:
-**re-run and diff** — ask the same question again and report which claims gained
-support, which were contradicted, and what is newly retracted. The state it needs
-already exists; no tool in the web-agent tier could build it without first building
-a store.
+The catching-up is done, and so is the thing nothing in the survey can do:
+**re-run and diff** is built (`research diff`, and automatically at the end of any
+re-run). Ask the same question again and be told which claims gained support, which
+were contradicted, and what is newly retracted — rather than being handed a fresh
+report to re-read. Retraction is the case that justifies it: it happens after a run
+is over, and nothing about that run will ever notice.
 
 Two measured weaknesses are better next work than any new feature, because they
 are now numbers rather than hunches:

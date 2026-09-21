@@ -736,6 +736,12 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
             args.question, budget=context.config.budget.to_dict(), tags=args.tag or []
         )
     ledger = context.ledger(investigation.id)
+    # Every run ends with a snapshot, so the *next* run has something to
+    # compare against without anyone having remembered to ask for one. This
+    # is the one from last time.
+    from research.graph import snapshot as snapshots
+
+    before = snapshots.latest(context.store, investigation.id)
 
     try:
         model = context.model(prefer_offline=args.model == "offline")
@@ -790,8 +796,16 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
     )
     run = await scheduler.run(max_tasks=args.max_tasks, plan_size=args.plan_size)
 
+    _, after = snapshots.save(
+        context.store, investigation.id, label=f"after run of {run.tasks_run} tasks"
+    )
+    changed = snapshots.diff(before, after) if before is not None else None
+
     if args.json:
-        print(as_json(run.summary()))
+        print(as_json({
+            **run.summary(),
+            **({"changed": changed.to_dict()} if changed is not None else {}),
+        }))
         return 0
 
     documents = context.store.documents.list(investigation.id, limit=1000)
@@ -801,7 +815,12 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
         f"\n{investigation.id}: {run.tasks_run} tasks, {len(documents)} documents from "
         f"{len(groups)} independent sources, {len(claims)} claims"
     )
-    print("Inspect it:")
+    if changed is not None:
+        print()
+        print("-- what changed since the last run " + "-" * 43)
+        print(snapshots.describe(changed))
+
+    print("\nInspect it:")
     print(f"  research claim list {investigation.id}")
     print(f"  research questions {investigation.id}")
     print(f"  research tasks {investigation.id}")
@@ -1047,6 +1066,54 @@ async def cmd_eval(context: CliContext, args: argparse.Namespace) -> int:
             print("  UNVERIFIABLE EXCERPTS            "
                   + ", ".join(report["unverifiable_excerpts"])
                   + "  <- a broken guarantee, not a quality problem")
+    return 0
+
+
+async def cmd_snapshot(context: CliContext, args: argparse.Namespace) -> int:
+    """Record what this investigation's claims amount to right now."""
+    from research.graph import snapshot as snapshots
+
+    snapshot_id, snapshot = snapshots.save(
+        context.store, args.investigation, label=args.label
+    )
+    if args.json:
+        print(as_json({"snapshot": snapshot_id, **snapshot.to_dict()}))
+        return 0
+    print(
+        f"{snapshot_id}  {len(snapshot.claims)} claims, {snapshot.documents} documents "
+        f"from {snapshot.independent_sources} independent sources"
+    )
+    print(f"Compare later with: research diff {args.investigation}")
+    return 0
+
+
+async def cmd_diff(context: CliContext, args: argparse.Namespace) -> int:
+    """What changed since a snapshot: the question nothing else can answer."""
+    from research.graph import snapshot as snapshots
+
+    if args.since:
+        before = snapshots.load(context.store, args.since)
+    else:
+        before = snapshots.latest(context.store, args.investigation)
+    if before is None:
+        print(
+            f"no snapshot of {args.investigation} to compare against. Take one with "
+            f"'research snapshot {args.investigation}', or re-run the investigation, "
+            "which takes one first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    after = (
+        snapshots.load(context.store, args.against)
+        if args.against
+        else snapshots.take(context.store, args.investigation)
+    )
+    result = snapshots.diff(before, after)
+    if args.json:
+        print(as_json(result.to_dict()))
+        return 0
+    print(snapshots.describe(result))
     return 0
 
 
@@ -1379,6 +1446,25 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--max-tasks", type=int, default=8, dest="max_tasks")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(handler=cmd_eval)
+
+    snapshot = subparsers.add_parser(
+        "snapshot", help="record what the claims amount to now, to compare later"
+    )
+    snapshot.add_argument("investigation")
+    snapshot.add_argument("--label", help="why this snapshot was taken")
+    snapshot.add_argument("--json", action="store_true")
+    snapshot.set_defaults(handler=cmd_snapshot)
+
+    difference = subparsers.add_parser(
+        "diff", help="what changed since the last snapshot"
+    )
+    difference.add_argument("investigation")
+    difference.add_argument("--since", help="a snapshot id; defaults to the most recent")
+    difference.add_argument(
+        "--against", help="compare with another snapshot rather than with the present"
+    )
+    difference.add_argument("--json", action="store_true")
+    difference.set_defaults(handler=cmd_diff)
 
     export = subparsers.add_parser("export", help="export an investigation to other tools")
     export_targets = export.add_subparsers(dest="export_command", required=True)

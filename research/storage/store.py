@@ -18,6 +18,7 @@ from research.storage.repositories import (
     InvestigationRepository,
     SearchQueryLog,
     SourceFetchLog,
+    SnapshotRepository,
     TaskRepository,
 )
 
@@ -41,6 +42,7 @@ class ResearchStore:
         self.events = EventRepository(db)
         self.relationships = RelationshipRepository(db)
         self.citations = CitationRepository(db)
+        self.snapshots = SnapshotRepository(db)
         self.queries = SearchQueryLog(db)
         self.fetches = SourceFetchLog(db)
         self.budget = BudgetRepository(db)

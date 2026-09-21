@@ -44,6 +44,10 @@ uv run research find investigation:1 "cost escalation"
 # Measure it: retrieval, source independence, and a whole run's record.
 uv run research measure
 
+# Ask again later, and be told only what changed.
+uv run research investigate --investigation investigation:1
+uv run research diff investigation:1
+
 # Read your own files in as evidence: PDF, text, Markdown, HTML, JSON.
 uv run research ingest investigation:1 ./papers --type paper --family academic
 ```
@@ -501,6 +505,27 @@ Independence scores precision 1.00, recall 0.60: it never merges two real
 sources, and it misses derived articles. That is a number to improve rather
 than a claim to make, which is the point of having it.
 
+**Ask again later.** Every run ends with a snapshot of what the claims
+amounted to, so the next one can say what is different rather than handing
+you a fresh report to re-read. No tool in the survey can do this; most of
+them keep nothing between runs, so they would have to build a store first.
+
+```
+$ uv run research diff investigation:1
+Changes that bear on the conclusions
+  claim:1  Peer-reviewed work says SMR costs beat gas
+      evidence retracted since the last run: evidence:1
+      status supported -> contradicted
+      counterevidence 0 -> 1 independent sources
+```
+
+The diff is about claims, not documents — "forty-one new documents" is
+activity, and the line above is an answer. Changes are sorted by whether
+they ought to change your mind: a retraction, a status flip or new
+counterevidence lead; a fifth supporting source when you had four does not.
+Retraction is the case that justifies the feature, because it happens after
+a run is over and nothing about that run will ever notice it.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -640,7 +665,7 @@ uv run research --config research.yaml sources
 ## Tests
 
 ```bash
-uv run pytest             # 787 tests, no network, no models, ~23s
+uv run pytest             # 810 tests, no network, no models, ~26s
 uv run pytest -m models   # 5 more that load the real stack, ~14s
 ```
 
@@ -705,6 +730,7 @@ identically with them installed and without them.
 | Passage-level evidence, clarifying questions | done |
 | Evaluation harness (`research measure`) | done |
 | MCP servers as sources | done, HTTP only |
+| Re-run and diff | done |
 
 Reddit is deliberately absent from the social sources: its API requires
 registered OAuth credentials and its terms restrict what may be stored and

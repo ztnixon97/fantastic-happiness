@@ -21,6 +21,7 @@ QUERY = "query"
 FETCH = "fetch"
 LINK = "link"
 RELATIONSHIP = "relationship"
+SNAPSHOT = "snapshot"
 
 _ID_RE = re.compile(r"^(?P<prefix>[a-z_]+):(?P<number>\d+)$")
 

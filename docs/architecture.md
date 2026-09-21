@@ -777,6 +777,49 @@ fuses must be one whose ranks all mean something.** A retriever with a long
 tail of near-zero matches violates that, and the failure shows up as a
 mysterious loss of precision in whatever is fused with it.
 
+## Re-running, and what changed
+
+Every tool in the survey answers a question once. Most of them keep nothing
+between runs, so "ask this again and tell me what is different" is not a
+feature they withheld - it is one they cannot build without first building a
+store. This one has the store.
+
+A snapshot is what an investigation's claims and evidence amounted to at a
+moment. It is derived and never authoritative, and it is stored whole rather
+than normalised: its only job is to be compared with a later one, and a
+snapshot that changed shape when the schema did could not do that job.
+
+Every autonomous run ends by taking one, which is what makes the feature
+work without anyone remembering to ask. `research investigate --investigation
+investigation:1` compares against the snapshot the previous run left and
+prints the difference; `research diff` does the same on demand, and
+`research snapshot` takes one explicitly.
+
+**The diff is about claims, not documents.** "Forty-one new documents" is
+activity. "claim:3 was supported by two independent sources, is now
+contradicted by a newer one, and the paper behind it has been retracted" is
+the answer to the question somebody asked. Changes are sorted into material
+and not, where material means it ought to change somebody's mind:
+
+- evidence behind a claim was retracted,
+- a claim's status changed,
+- contradicting evidence is now newer than anything supporting it,
+- counterevidence arrived,
+- supporting sources were lost,
+- support crossed from one independent source to two - the threshold the
+  assessment itself cares about.
+
+Gaining a fifth supporting source when you had four is reported and is not
+material: more of what you already had does not change anybody's mind. Nor
+is a new *copy* of a story already cited - support is counted in
+independence keys, not document ids, for the same reason the report counts
+sources rather than documents.
+
+Retraction is the case that justifies the whole feature. It happens after a
+run has finished, and nothing about the original run will ever notice it. A
+system that re-answers the question from scratch hands you a fresh report
+and leaves you to spot that a citation has quietly become worthless.
+
 ## Export
 
 `research/export/` is a presentation layer beside `research/ui/`: nothing

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Sequence
 
 from research.errors import NotFound
-from research.ids import EVIDENCE, FETCH, INVESTIGATION, QUERY, TASK
+from research.ids import EVIDENCE, FETCH, INVESTIGATION, QUERY, SNAPSHOT, TASK
 from research.models.common import DuplicateRelation, SourceFamily, utcnow
 from research.models.evidence import EvidenceDocument
 from research.models.investigation import (
@@ -703,3 +703,64 @@ class BudgetRepository:
         self.db.execute(
             "DELETE FROM budget_usage WHERE investigation_id = ?", (investigation_id,)
         )
+
+class SnapshotRepository:
+    """Stored states of an investigation, for comparing with later ones.
+
+    Deals in plain payloads rather than a snapshot type: what a snapshot
+    *means* is a question about claims and evidence, which is decided a
+    layer up. Storage only has to keep it and give it back unchanged.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def save(
+        self, investigation_id: str, payload: dict[str, Any], *, label: str | None = None
+    ) -> str:
+        snapshot_id = self.db.next_id(SNAPSHOT)
+        self.db.execute(
+            "INSERT INTO snapshots(id, investigation_id, label, taken_at, payload) "
+            "VALUES(?,?,?,?,?)",
+            (snapshot_id, investigation_id, label, encode_dt(utcnow()), to_json(payload)),
+        )
+        return snapshot_id
+
+    def get(self, snapshot_id: str) -> dict[str, Any]:
+        row = self.db.query_one("SELECT * FROM snapshots WHERE id = ?", (snapshot_id,))
+        if row is None:
+            raise NotFound(f"no snapshot {snapshot_id}")
+        return self._read(row)
+
+    def latest(self, investigation_id: str) -> dict[str, Any] | None:
+        row = self.db.query_one(
+            "SELECT * FROM snapshots WHERE investigation_id = ? "
+            "ORDER BY taken_at DESC, id DESC LIMIT 1",
+            (investigation_id,),
+        )
+        return self._read(row) if row else None
+
+    def list(self, investigation_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self.db.query(
+            "SELECT * FROM snapshots WHERE investigation_id = ? "
+            "ORDER BY taken_at DESC, id DESC LIMIT ?",
+            (investigation_id, limit),
+        )
+        return [self._read(row) for row in rows]
+
+    def count(self, investigation_id: str) -> int:
+        return int(
+            self.db.scalar(
+                "SELECT COUNT(*) FROM snapshots WHERE investigation_id = ?",
+                (investigation_id,),
+            )
+            or 0
+        )
+
+    @staticmethod
+    def _read(row: Any) -> dict[str, Any]:
+        payload = from_json(row["payload"], {}) or {}
+        payload["snapshot_id"] = row["id"]
+        payload["label"] = row["label"]
+        payload["taken_at"] = row["taken_at"]
+        return payload

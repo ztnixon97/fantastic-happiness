@@ -22,7 +22,7 @@ from typing import Any, Iterator
 
 from research.errors import StorageError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -327,6 +327,22 @@ CREATE TABLE IF NOT EXISTS budget_usage (
     used             REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (investigation_id, resource)
 );
+
+-- What an investigation's claims and evidence amounted to at a moment.
+-- Derived from the tables above and never authoritative, which is why it is
+-- stored whole rather than normalised: its job is to be compared with a
+-- later one, and a snapshot that changed shape when the schema did could
+-- not be.
+CREATE TABLE IF NOT EXISTS snapshots (
+    id               TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id) ON DELETE CASCADE,
+    label            TEXT,
+    taken_at         TEXT NOT NULL,
+    payload          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS snapshots_by_investigation
+    ON snapshots(investigation_id, taken_at DESC);
 """
 
 
