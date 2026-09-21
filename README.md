@@ -222,7 +222,9 @@ keep that true. The planning layer thinks
 selection happens in the registry, below planning.
 
 See [docs/architecture.md](docs/architecture.md) for the detail, including
-how to add a source.
+how to add a source, and [docs/landscape.md](docs/landscape.md) for what
+comparable tools do, what this one does that they do not, and what is
+missing.
 
 ## What the system does with what it finds
 
