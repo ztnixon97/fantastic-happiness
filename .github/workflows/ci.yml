@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# A new push supersedes whatever was still running for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --frozen: fail if uv.lock does not match pyproject.toml, rather than
+      # silently resolving something else. A lockfile that CI ignores is not
+      # a lockfile.
+      - run: uv sync --frozen
+
+      - run: uv run ruff check .
+
+      # The default suite runs no models and touches no network.
+      - run: uv run pytest
+
+  models:
+    name: the real ML stack
+    runs-on: ubuntu-latest
+    # Slower, needs the network for model weights on a cold cache, and it
+    # cannot fail the fast job. It exists because the default suite stubs
+    # both models out, so it cannot tell a working install from a broken
+    # one - a torch/torchvision wheel mismatch once left the embedder dead
+    # while every other test passed.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen
+
+      - name: cache model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: hf-${{ runner.os }}-
+
+      - run: uv run pytest -m models

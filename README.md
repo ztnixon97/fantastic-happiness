@@ -644,6 +644,10 @@ uv run pytest             # 787 tests, no network, no models, ~23s
 uv run pytest -m models   # 5 more that load the real stack, ~14s
 ```
 
+CI runs both, in separate jobs: `uv sync --frozen` so a stale lockfile fails
+rather than silently resolving something else, then ruff and the fast suite;
+and a second job with the model cache warmed that runs the `models` marker.
+
 The default suite runs no models at all — they would need a network, a cache
 directory and a lot of CPU, and the suite would stop being deterministic. The
 cost of that is the one thing it cannot see: a broken install. A torch and
