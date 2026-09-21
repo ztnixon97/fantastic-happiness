@@ -305,6 +305,37 @@ route table is fixed, and retrieved content reaches the browser as data and
 is rendered as text — the client has no `innerHTML` and the page loads no
 remote resources.
 
+**Obsidian.** `research export obsidian <investigation> <vault>` writes the
+investigation into a vault as notes, because the mapping is close to exact:
+an investigation is already a graph of records joined by stable identifiers,
+and a vault is a graph of notes joined by links.
+
+```
+Research/investigation-1 Are SMRs competitive…/
+  investigation-1 ….md      the report, with claim:3 and evidence:12 as live links
+  investigation-1 ….canvas  the claim/evidence graph, laid out deterministically
+  Claims/     claim-1 The flagship project was terminated.md
+  Evidence/   evidence-6 NuScale and utility group terminate….md
+  Entities/   Events/   Tasks/
+```
+
+Each note carries its record in YAML frontmatter — source type, publisher,
+DOI, content hash, provenance, independence — so Dataview queries and
+Obsidian's own search work on it, and the identifier is an alias, so typing
+`evidence:12` resolves to the right note. Three properties survive the
+translation: a syndicated copy is not a second note in the graph (it is
+listed on the note for the document it copies), every evidence note carries
+the provider call and content hash that produced it, and retrieved text sits
+in a callout marked external while model reasoning is labelled analysis.
+
+A vault is a hostile rendering target — Obsidian renders HTML in an Electron
+window, resolves `[[wikilinks]]` into real graph edges, and lets plugins
+execute fenced blocks — so retrieved content is escaped for that context:
+markup neutralised, links defanged, fences broken, and frontmatter written
+through a real YAML serialiser so a title containing `---` cannot end the
+block and spill into the note. The export writes only inside its own folder
+and will not overwrite a note it did not generate without `--force`.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -385,7 +416,7 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 498 tests, no network, ~19s
+.venv/bin/python -m pytest          # 551 tests, no network, ~21s
 ```
 
 Providers and models alike are exercised through recorded payloads served by
@@ -397,7 +428,7 @@ citation traversal and its termination, the action vocabulary's role
 restrictions, the worker loop and its failure modes, planner validation,
 bounded recursion, every stopping rule, report traceability, budget
 enforcement, provider outage and partial failure, SSRF and prompt-injection
-defences, resuming an investigation, and the CLI end to end.
+defences, resuming an investigation, vault export and its escaping, and the CLI end to end.
 
 ## Status
 

@@ -18,6 +18,7 @@ research/
   synthesis/      the report, assembled from stored state
   cli/            inspection and execution surface
   ui/             read-only projection of stored state for a browser
+  export/         projections into other tools (Obsidian vaults)
 ```
 
 Dependencies point downward only. `models` imports nothing from the package
@@ -411,6 +412,34 @@ that left the swatches grey.
 The graph view folds copies into the document they copy, for the same reason
 the counting does: drawing a syndicated copy as its own node is the visual
 form of counting it as its own source.
+
+## Export
+
+`research/export/` is a presentation layer beside `research/ui/`: nothing
+below it imports it, and removing it changes nothing about how research runs.
+
+The Obsidian exporter is the interesting one because a vault is a graph
+already. Records become notes, relationships become wikilinks, and the
+structured record goes into YAML frontmatter where Dataview and search can
+reach it. Identifiers are registered as note aliases, so `evidence:12` in a
+report resolves to the note rather than reading as text.
+
+Two constraints shape the implementation:
+
+*A vault is a rendering target, not a text dump.* Obsidian renders raw HTML
+inside Electron, resolves `[[...]]` into real edges, and lets Dataview and
+Templater execute fenced blocks. So `escape_external` neutralises markup,
+wikilinks, embeds, fences and comment markers before retrieved content lands
+in a note, and frontmatter goes through a YAML serialiser rather than string
+formatting - a title containing a line reading `---` would otherwise end the
+block and spill its remainder into the body as content.
+
+*The vault belongs to the user.* The exporter writes only inside its own
+folder, resolves every path to check that, and refuses to overwrite a file
+that does not carry its marker. A note someone has edited is reported and
+left alone unless `--force` says otherwise. The canvas carries the marker in
+its JSON for the same reason - and if Obsidian drops that key when the reader
+edits the canvas, the file stops being ours, which is the right outcome.
 
 ## Deliberate omissions
 

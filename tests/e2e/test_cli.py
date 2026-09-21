@@ -328,3 +328,55 @@ class TestReportCommand:
         assert payload["counts"]["independent_sources"] <= payload["counts"]["documents"]
         assert payload["sources"]
         assert all(source["provenance"] for source in payload["sources"])
+
+
+class TestExportCommand:
+    def test_an_investigation_exports_to_a_vault(self, db, tmp_path, capsys) -> None:
+        run(db, "demo")
+        capsys.readouterr()
+        vault = tmp_path / "Vault"
+        vault.mkdir()
+        assert run(db, "export", "obsidian", "investigation:1", str(vault)) == 0
+        output = capsys.readouterr().out
+        assert "notes ->" in output
+        assert "canvas:" in output
+        notes = list(vault.rglob("*.md"))
+        assert len(notes) > 10
+        assert any(note.parent.name == "Evidence" for note in notes)
+        assert list(vault.rglob("*.canvas"))
+
+    def test_the_export_is_reported_as_data(self, db, tmp_path, capsys) -> None:
+        run(db, "demo")
+        capsys.readouterr()
+        vault = tmp_path / "Vault"
+        vault.mkdir()
+        assert run(db, "--json", "export", "obsidian", "investigation:1", str(vault)) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["notes_written"] > 10
+        assert payload["skipped"] == []
+        assert payload["canvas"]
+
+    def test_a_custom_folder_is_honoured(self, db, tmp_path, capsys) -> None:
+        run(db, "demo")
+        capsys.readouterr()
+        vault = tmp_path / "Vault"
+        vault.mkdir()
+        assert run(
+            db, "export", "obsidian", "investigation:1", str(vault), "--folder", "Investigations"
+        ) == 0
+        assert (vault / "Investigations").is_dir()
+        assert not (vault / "Research").exists()
+
+    def test_existing_notes_are_reported_not_clobbered(self, db, tmp_path, capsys) -> None:
+        run(db, "demo")
+        capsys.readouterr()
+        vault = tmp_path / "Vault"
+        vault.mkdir()
+        run(db, "export", "obsidian", "investigation:1", str(vault))
+        capsys.readouterr()
+
+        note = next(path for path in vault.rglob("*.md") if path.parent.name == "Evidence")
+        note.write_text("# mine\n", encoding="utf-8")
+        assert run(db, "export", "obsidian", "investigation:1", str(vault)) == 0
+        assert "skipped" in capsys.readouterr().err
+        assert note.read_text() == "# mine\n"
