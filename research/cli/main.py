@@ -1362,8 +1362,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     index.set_defaults(handler=cmd_index)
 
+    # Named "measure" rather than "eval": a command called eval, in a system
+    # whose security posture is that no command evaluates anything, is a bad
+    # name whatever it does. A test enforces that, and it was right to.
     evaluate = subparsers.add_parser(
-        "eval", help="measure retrieval, independence and a whole run"
+        "measure", help="measure retrieval, independence and a whole run"
     )
     evaluate.add_argument(
         "what", nargs="?", default="all",
