@@ -17,6 +17,7 @@ research/
   orchestration/  the scheduler and the stopping rules
   synthesis/      the report, assembled from stored state
   cli/            inspection and execution surface
+  ui/             read-only projection of stored state for a browser
 ```
 
 Dependencies point downward only. `models` imports nothing from the package
@@ -343,6 +344,61 @@ secondary claims traced to primaries, counterevidence no longer changing the
 picture, searches returning only material already held, citation traversal
 reaching diminishing relevance. `investigations.stop_reason` records which
 one ended the run.
+
+## What live running changed
+
+Mocked providers answer the shape you recorded. Real ones answer what they
+feel like, and testing against them changed the code in ways no fixture would
+have prompted:
+
+* **Crossref's `select` is route-specific.** Asking for one field that is not
+  selectable on `/works` fails the entire request with HTTP 400. `language`
+  is present in full records but is not selectable there, so every Crossref
+  search was returning nothing. `SELECT_FIELDS` is now a named constant with
+  that fact written next to it.
+* **arXiv phrase-quotes whatever you send.** A research question passed as
+  one quoted phrase matches nothing; ANDing every term is nearly as bad. The
+  adapter sends the unquoted term list and exposes a `phrase` filter for the
+  cases that want one.
+* **Real pages have `<title>` inside `<svg>`.** Federal sites label their
+  banner padlock with `<title>Lock</title>`, which the extractor was reading
+  as the document title. A `<title>` inside a skipped element is now ignored.
+* **A refusing provider is expensive.** A rate-limited provider costs the
+  full retry budget on every search. Three consecutive failures now retire a
+  provider for the rest of the investigation, counted from the query log so
+  the decision survives a restart and is visible in `research activity`.
+* **"Nothing found" and "nothing looked" are different answers.** With no
+  keyed web provider configured, web search has no provider at all. That is
+  now recorded as `no_provider` and reported to the worker as a failure with
+  a suggestion, rather than as an empty result it would read as evidence of
+  absence.
+* **Truncating an observation breaks it.** Observations were being cut to a
+  character budget, which turns JSON into something a worker cannot parse -
+  and the worker then behaves as though the search found nothing. Lists are
+  now shortened structurally, with a count of what was withheld.
+
+The first three were single-line bugs that every mocked test passed.
+
+## The UI
+
+`research ui` serves a read-only projection of stored state. It is outside
+the research core in the strongest sense: nothing below it imports it, and
+removing the package changes nothing about how research runs.
+
+The safety properties are structural rather than advisory. Only GET is
+answered; the route table is fixed and identifiers are validated against
+`prefix:number` before they reach the store; every handler is a read model.
+On the client side, retrieved content is inserted with `textContent` only -
+there is no `innerHTML`, `insertAdjacentHTML` or `eval` in the file, and a
+test asserts their absence - and the page is served under a content policy
+that forbids remote script, inline script and inline style. Driving the page
+in a real browser found two bugs that reading it did not: a legend built with
+inline `style` attributes its own CSP rejects, and a CSS specificity mistake
+that left the swatches grey.
+
+The graph view folds copies into the document they copy, for the same reason
+the counting does: drawing a syndicated copy as its own node is the visual
+form of counting it as its own source.
 
 ## Deliberate omissions
 

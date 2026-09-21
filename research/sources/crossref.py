@@ -26,6 +26,26 @@ from research.sources.base import SourceCapabilities
 
 _MAX_ROWS = 50
 
+#: Fields Crossref accepts in ``select`` on the /works route. The list is
+#: route-specific and the API rejects the whole request - HTTP 400, no
+#: results - if one field is not selectable there. ``language`` is returned in
+#: full records but is *not* selectable, which is the kind of thing only a
+#: live call finds.
+SELECT_FIELDS = (
+    "DOI",
+    "title",
+    "author",
+    "issued",
+    "created",
+    "abstract",
+    "type",
+    "container-title",
+    "publisher",
+    "URL",
+    "is-referenced-by-count",
+    "subject",
+)
+
 
 class CrossrefSource(AcademicAdapter):
     name = "crossref"
@@ -55,10 +75,7 @@ class CrossrefSource(AcademicAdapter):
         params: dict[str, Any] = {
             "query.bibliographic": query.text,
             "rows": min(query.limit, _MAX_ROWS),
-            "select": (
-                "DOI,title,author,issued,created,abstract,type,container-title,"
-                "publisher,URL,is-referenced-by-count,subject,language"
-            ),
+            "select": ",".join(SELECT_FIELDS),
         }
         date_filters = []
         if query.published_after:

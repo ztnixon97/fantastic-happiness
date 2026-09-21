@@ -7,11 +7,12 @@ investigations, evidence, claims and provenance, with a constrained set of
 research operations over it. Models supply semantic judgement. Storage,
 identity, deduplication, budgets and provenance are ordinary code.
 
-Milestones 1–7 are implemented: the evidence foundation, the academic and
-web/news slices, the claim/entity/event graph, the planner and specialised
-research workers, bounded recursion with explicit stopping criteria, and a
-report assembled from stored state. A UI and public social sources are not
-built — see [Status](#status).
+All nine milestones are implemented: the evidence foundation, the academic,
+web/news and social slices, the claim/entity/event graph, the planner and
+specialised research workers, bounded recursion with explicit stopping
+criteria, a report assembled from stored state, and a read-only UI over the
+same state. It has been run against live providers, not only fixtures — see
+[Running against live sources](#running-against-live-sources).
 
 ## Try it
 
@@ -86,6 +87,46 @@ Academic sources (OpenAlex, Crossref, arXiv, Semantic Scholar) and the GDELT
 news index need no credentials. Keyed web providers are used only if a key is
 present; without one the system reports which sources it had rather than
 failing.
+
+## Running against live sources
+
+Drop `--offline` and the same commands use real providers. Academic sources
+(OpenAlex, Crossref, arXiv, Semantic Scholar), the GDELT news index, Bluesky
+and Mastodon need no credentials; keyed web providers and YouTube are used
+only if a key is present.
+
+```bash
+export RESEARCH_CONTACT_EMAIL=you@example.org
+research new "are small modular reactors competitive for AI data centres?"
+research search investigation:1 "small modular reactor levelized cost" --family academic
+research citations investigation:1 evidence:9 --direction backward --depth 1
+research search investigation:1 "nuclear reactor economics" --family social
+
+# A whole investigation, driven by the built-in rule-based researcher rather
+# than a paid model: a smoke test of a deployment that costs nothing.
+research investigate "your question" --model offline
+```
+
+Live running is not the same as mocked running, and testing against real
+providers changed the code. Some of what it found:
+
+- Crossref rejects a whole request — HTTP 400, no results — if one field in
+  `select` is not available on that route. `language` is returned in full
+  records but is not selectable, so *every* Crossref search was failing.
+- arXiv treats a quoted string as an exact phrase, so passing a research
+  question as one phrase matched nothing; ANDing every term over-restricts
+  too. The unquoted term list is what works.
+- Federal sites label the padlock icon in their banner with an SVG
+  `<title>Lock</title>`, which the extractor was reading as the document
+  title.
+- A shared egress IP gets rate-limited by OpenAlex, Semantic Scholar and
+  GDELT. Retrying a provider that is refusing you costs the full retry budget
+  on every search, so a provider that fails three times running is now
+  skipped for the rest of the investigation — recorded, and reported, not
+  silent.
+- An empty result and an absent provider are different answers. With no
+  keyed web provider configured, web search has no provider at all; that is
+  now said plainly rather than returned as "nothing found".
 
 ## Core idea
 
@@ -238,6 +279,15 @@ summary; it cannot introduce a fact, and a summary citing identifiers that do
 not exist is discarded rather than published. Every heading the brief asks
 for is there, and every finding carries the claim and evidence ids behind it.
 
+**A UI, once the CLI worked.** `research ui` serves a read-only view of the
+same stored state: the task tree with its spawned children, claims with their
+excerpts and gaps, a claim/evidence graph that folds copies into the document
+they copy, entities with name-only matches flagged, the timeline, the source
+list, open questions and the full activity log. Only GET is answered, the
+route table is fixed, and retrieved content reaches the browser as data and
+is rendered as text — the client has no `innerHTML` and the page loads no
+remote resources.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -318,7 +368,7 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 440 tests, no network, ~14s
+.venv/bin/python -m pytest          # 498 tests, no network, ~19s
 ```
 
 Providers and models alike are exercised through recorded payloads served by
@@ -343,10 +393,15 @@ defences, resuming an investigation, and the CLI end to end.
 | 5. Planner and specialised workers | done |
 | 6. Recursive follow-up | done |
 | 7. Synthesis | done |
-| 8. Investigation UI | deliberately not started |
-| 9. Public social sources | not started; the source interface is ready for them |
+| 8. Investigation UI | done |
+| 9. Public social sources | Bluesky, Mastodon, YouTube; Reddit deliberately omitted |
 
-The next step is Milestone 8, and only because the CLI pipeline now works: a
-task tree, claim/evidence graph, timeline and source browser over the same
-stored state. Milestone 9 (public social sources) needs no new architecture —
-the source interface is ready for it.
+Reddit is deliberately absent from the social sources: its API requires
+registered OAuth credentials and its terms restrict what may be stored and
+redistributed, so it is not something to enable by default. The interface is
+ready for it where an operator has the standing to use it.
+
+What would come next, in order: a sandboxed data-analysis capability with
+explicit inputs and outputs (the one place the non-goals leave room for
+execution), transcript evidence for video, and per-provider adaptive pacing
+rather than one global rate limit.

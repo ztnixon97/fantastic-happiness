@@ -81,7 +81,7 @@ async def act(runtime: ActionRuntime, action: str, **arguments):
 class TestActionSurface:
     def test_the_vocabulary_is_the_one_research_needs(self) -> None:
         assert set(ACTIONS) == {
-            "search_news", "search_academic", "search_web", "fetch_source",
+            "search_news", "search_academic", "search_web", "search_social", "fetch_source",
             "follow_citations", "find_primary_source", "find_counterevidence",
             "resolve_entity", "build_timeline", "create_claim", "link_evidence",
             "get_claim", "get_evidence", "get_open_questions",
@@ -95,8 +95,10 @@ class TestActionSurface:
     def test_roles_get_different_tools(self) -> None:
         news = {spec.name for spec in actions_for(ResearchRole.NEWS)}
         academic = {spec.name for spec in actions_for(ResearchRole.ACADEMIC)}
+        social = {spec.name for spec in actions_for(ResearchRole.SOCIAL)}
         assert "follow_citations" in academic and "follow_citations" not in news
         assert "search_news" in news and "search_news" not in academic
+        assert "search_social" in social and "search_social" not in academic
 
     async def test_an_action_outside_the_role_is_refused(self, runtime) -> None:
         runtime.task.role = ResearchRole.NEWS
@@ -479,3 +481,70 @@ class TestPlanner:
         assert planner.ingest_followups(
             too_deep, [FollowUp(operation=Operation.SEARCH_WEB, objective="deeper still")]
         ) == []
+
+
+class TestObservationShape:
+    """Observations must stay parseable, whatever their size."""
+
+    def test_long_lists_are_shortened_not_truncated(self) -> None:
+        import json
+
+        from research.agents.runtime import Observation
+
+        observation = Observation(
+            action="search_academic",
+            ok=True,
+            data={
+                "query": "reactors",
+                "results": [
+                    {"id": f"evidence:{index}", "title": "A paper " * 12}
+                    for index in range(40)
+                ],
+            },
+        )
+        rendered = observation.render()
+        payload = json.loads(rendered.split(" -> ", 1)[1])
+        assert len(payload["results"]) <= Observation.MAX_LIST_ITEMS
+        assert payload["results_omitted"] == 40 - len(payload["results"])
+        # Every element is still a result object: nothing is appended that a
+        # consumer iterating the list would trip over.
+        assert all(isinstance(entry, dict) for entry in payload["results"])
+
+    def test_an_enormous_observation_is_still_valid_json(self) -> None:
+        import json
+
+        from research.agents.runtime import Observation
+
+        observation = Observation(
+            action="search_web",
+            ok=True,
+            data={"results": [{"id": f"evidence:{i}", "title": "x" * 400} for i in range(200)]},
+        )
+        payload = json.loads(observation.render().split(" -> ", 1)[1])
+        assert payload["results"]
+
+
+class TestWorkerResilience:
+    async def test_a_model_client_that_raises_fails_only_its_task(
+        self, store, investigation, registry, task
+    ) -> None:
+        from research.budgets import BudgetLedger
+        from research.llm.base import ModelSpec
+
+        class ExplodingModel:
+            spec = ModelSpec(provider="broken", model="broken")
+
+            async def complete(self, messages, **kwargs):
+                raise RuntimeError("adapter bug")
+
+        worker = ResearchWorker(
+            store,
+            registry,
+            ExplodingModel(),
+            investigation_id=investigation.id,
+            ledger=BudgetLedger(store.budget, investigation.id, BudgetPolicy()),
+        )
+        outcome = await worker.run(task)
+        assert outcome.status is TaskStatus.FAILED
+        assert "RuntimeError" in outcome.stopped_by
+        assert store.tasks.get(task.id).error

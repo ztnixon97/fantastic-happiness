@@ -44,7 +44,12 @@ class ArxivSource(AcademicAdapter):
         )
 
     async def search(self, query: ResearchQuery) -> list[SearchHit]:
-        search_query = f'all:"{query.text}"' if " " in query.text else f"all:{query.text}"
+        # arXiv treats a quoted string as an exact phrase, which almost never
+        # matches a research question, and ANDing every term over-restricts a
+        # long one. The unquoted term list is what actually works; a caller
+        # that really wants a phrase asks for one.
+        phrase = bool(query.filters.get("phrase"))
+        search_query = f'all:"{query.text}"' if phrase else f"all:{query.text}"
         if query.published_after or query.published_before:
             start = _stamp(query.published_after, "190001010000")
             end = _stamp(query.published_before, "299901010000")

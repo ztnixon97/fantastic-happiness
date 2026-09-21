@@ -22,17 +22,37 @@ class NotFound(StorageError):
 class SourceError(ResearchError):
     """Base class for source/provider failures."""
 
-    def __init__(self, message: str, *, provider: str, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.retryable = retryable
+        #: HTTP status, when the failure came from a response. Recorded in the
+        #: fetch log so "404" and "429" are distinguishable without reading
+        #: error prose.
+        self.status_code = status_code
 
 
 class SourceUnavailable(SourceError):
     """The provider could not be reached or returned a server-side failure."""
 
-    def __init__(self, message: str, *, provider: str, retryable: bool = True) -> None:
-        super().__init__(message, provider=provider, retryable=retryable)
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        retryable: bool = True,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(
+            message, provider=provider, retryable=retryable, status_code=status_code
+        )
 
 
 class SourceRejected(SourceError):

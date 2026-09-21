@@ -124,3 +124,27 @@ class TestClassification:
             PRIMARY_SOURCE_DISTANCE[SourceType.CORPORATE_FILING]
             < PRIMARY_SOURCE_DISTANCE[SourceType.SECONDARY_NEWS_REPORTING]
         )
+
+
+class TestRealWorldMarkup:
+    """Regressions for markup found on live pages."""
+
+    def test_an_svg_title_is_not_the_document_title(self) -> None:
+        # Taken from a US federal site: the design-system banner labels its
+        # padlock icon with <title>Lock</title> inside an <svg>.
+        html = """<html><head><title>Advanced Reactors | NRC</title></head>
+        <body><div class="usa-banner">
+          <svg viewBox="0 0 12 16"><title>Lock</title><path d="M6 0"/></svg>
+          <span>Official websites use .gov</span>
+        </div><article><p>The Commission reviews advanced reactor designs.</p></article>
+        </body></html>"""
+        page = extract_page(html)
+        assert page.title == "Advanced Reactors | NRC"
+        assert "Lock" not in (page.title or "")
+
+    def test_svg_labels_do_not_leak_into_the_body_either(self) -> None:
+        html = """<html><body><article><p>Body text here.</p>
+        <svg><title>Search</title><desc>a magnifier</desc></svg></article></body></html>"""
+        page = extract_page(html)
+        assert "Search" not in page.text
+        assert "Body text here." in page.text

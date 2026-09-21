@@ -389,12 +389,32 @@ class TestSocialSources:
         )
         hits = await source.search(query("nuclear data centre agreements",
                                          families=[SourceFamily.SOCIAL]))
-        assert "/api/v1/timelines/tag/agreements" in str(requests[0].url)
+        assert "/api/v1/timelines/tag/nuclear" in str(requests[0].url)
         assert len(hits) == 1, "a boost is a copy, not a second source"
         assert hits[0].raw["account_handle"] == "gridwatcher@mastodon.social"
         # HTML post bodies are stripped by the same extractor the fetcher uses.
         assert "<p>" not in hits[0].snippet
         assert "broken ground" in hits[0].snippet
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("nuclear energy policy debate", "nuclear"),
+            ("recent news about smr cancellations", "cancellations"),
+            ("datacentre power agreements", "datacentre"),
+        ],
+    )
+    async def test_the_tag_is_the_subject_not_the_longest_word(
+        self, text: str, expected: str
+    ) -> None:
+        from research.sources.social import MastodonSource
+
+        requests: list[httpx.Request] = []
+        source = MastodonSource(
+            client_for({"/timelines/tag/": json_fixture("mastodon_tag.json")}, record=requests)
+        )
+        await source.search(query(text, families=[SourceFamily.SOCIAL]))
+        assert f"/timelines/tag/{expected}" in str(requests[0].url)
 
     async def test_mastodon_honours_an_explicit_hashtag(self) -> None:
         from research.sources.social import MastodonSource
@@ -428,3 +448,32 @@ class TestSocialSources:
         with pytest.raises(SourceNotConfigured) as exc:
             await source.search(query("x", families=[SourceFamily.VIDEO]))
         assert "RESEARCH_YOUTUBE_API_KEY" in str(exc.value)
+
+
+class TestProviderQuirks:
+    """Regressions for things only a live call revealed."""
+
+    def test_crossref_selects_only_fields_that_route_accepts(self) -> None:
+        from research.sources.crossref import SELECT_FIELDS
+
+        # Crossref rejects the entire request when one select field is not
+        # available on /works. 'language' is returned in full records but is
+        # not selectable there, and asking for it made every search fail.
+        assert "language" not in SELECT_FIELDS
+        assert "DOI" in SELECT_FIELDS and "abstract" in SELECT_FIELDS
+
+    async def test_arxiv_does_not_phrase_quote_a_whole_question(self) -> None:
+        requests: list[httpx.Request] = []
+        source = ArxivSource(client_for({"/query": fixture("arxiv_search.xml")}, record=requests))
+        await source.search(query("small modular reactor levelized cost of electricity"))
+        sent = str(requests[0].url)
+        assert "all%3Asmall" in sent or "all:small" in sent
+        assert "%22" not in sent, "a quoted phrase matches nothing on arXiv"
+
+    async def test_arxiv_quotes_when_a_phrase_is_asked_for(self) -> None:
+        requests: list[httpx.Request] = []
+        source = ArxivSource(client_for({"/query": fixture("arxiv_search.xml")}, record=requests))
+        await source.search(
+            ResearchQuery(text="small modular reactor", filters={"phrase": True})
+        )
+        assert "%22" in str(requests[0].url)

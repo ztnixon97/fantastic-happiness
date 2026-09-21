@@ -188,6 +188,8 @@ class OfflineResearcher:
             action, arguments = "search_news", {"query": query, "limit": 8}
         elif role == "skeptic":
             action, arguments = "find_counterevidence", {"proposition": _proposition(objective)}
+        elif role == "social":
+            action, arguments = "search_social", {"query": query, "limit": 8}
         else:
             action, arguments = "search_web", {"query": query, "limit": 8}
         arguments["objective"] = objective
@@ -275,8 +277,13 @@ class OfflineResearcher:
         if observation is None:
             return
         action, payload = observation
-        if action in ("search_academic", "search_news", "search_web", "find_counterevidence"):
+        if action in (
+            "search_academic", "search_news", "search_web", "search_social",
+            "find_counterevidence",
+        ):
             for entry in payload.get("results") or payload.get("documents") or []:
+                if not isinstance(entry, dict):
+                    continue
                 document_id = entry.get("id")
                 # Copies add nothing: read the original instead.
                 if document_id and not entry.get("not_independent_of"):
@@ -289,7 +296,7 @@ class OfflineResearcher:
             state.claim_id = payload.get("claim_id")
         elif action in ("follow_citations", "find_primary_source"):
             for entry in payload.get("new_documents") or payload.get("documents") or []:
-                if entry.get("id"):
+                if isinstance(entry, dict) and entry.get("id"):
                     state.documents.append(entry["id"])
 
 

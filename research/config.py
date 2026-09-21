@@ -94,6 +94,10 @@ class AcquisitionPolicy:
         "application/atom+xml",
         "application/rss+xml",
     )
+    #: Consecutive failures from one provider before an investigation stops
+    #: calling it. A rate-limited or unreachable provider otherwise costs the
+    #: full retry budget on every single search.
+    provider_failure_threshold: int = 3
     #: Loopback/private/link-local destinations are refused. Only a test or a
     #: deliberate local-mirror deployment should turn this on.
     allow_private_hosts: bool = False

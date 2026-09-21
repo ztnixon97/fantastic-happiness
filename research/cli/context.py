@@ -30,14 +30,16 @@ class CliContext:
     client: SafeHttpClient
     offline: bool = False
 
-    def model(self) -> ModelClient:
+    def model(self, *, prefer_offline: bool = False) -> ModelClient:
         """The model this run reasons with.
 
         Offline runs use the rule-based researcher, which needs no credential
-        and behaves deterministically. Everything else comes from
-        configuration; there is no silent fallback between vendors.
+        and behaves deterministically; ``prefer_offline`` asks for it against
+        live sources too, which is how a deployment gets smoke-tested without
+        spending anything. Everything else comes from configuration: there is
+        no silent fallback between vendors.
         """
-        if self.offline:
+        if self.offline or prefer_offline:
             return offline_research_model()
         return build_model(self.config)
 

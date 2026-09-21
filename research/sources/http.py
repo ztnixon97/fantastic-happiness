@@ -229,8 +229,12 @@ class SafeHttpClient:
                 await response.aclose()
                 message = f"{provider} returned HTTP {response.status_code} for {current_url}"
                 if response.status_code in RETRYABLE_STATUS:
-                    raise SourceUnavailable(message, provider=provider)
-                raise SourceRejected(message, provider=provider)
+                    raise SourceUnavailable(
+                        message, provider=provider, status_code=response.status_code
+                    )
+                raise SourceRejected(
+                    message, provider=provider, status_code=response.status_code
+                )
 
             self._check_content_type(content_type, current_url)
             content, truncated = await self._read_capped(response)

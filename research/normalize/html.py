@@ -134,7 +134,10 @@ class _PageParser(HTMLParser):
         if tag in _SKIP_CONTENT:
             self._skip_depth += 1
             return
-        if tag == "title":
+        if tag == "title" and not self._skip_depth:
+            # <title> also exists inside <svg>, where it is an accessibility
+            # label for an icon ("Lock", "Search") and emphatically not the
+            # document's title. Real pages do this constantly.
             self._in_title = True
         elif tag == "article":
             self._article_depth += 1

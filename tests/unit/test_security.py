@@ -190,3 +190,20 @@ class TestCredentialIsolation:
             "accept-encoding",
             "connection",
         }
+
+
+class TestFailureRecords:
+    """A failure is only useful if it says what kind of failure it was."""
+
+    async def test_http_status_travels_with_the_error(self) -> None:
+        for status, retryable in ((404, False), (429, True), (503, True), (403, False)):
+            client = SafeHttpClient(
+                AcquisitionPolicy(per_host_min_interval_seconds=0.0, max_retries=0),
+                transport=httpx.MockTransport(
+                    lambda request, status=status: httpx.Response(status, text="no")
+                ),
+            )
+            with pytest.raises((SourceRejected, SourceUnavailable)) as exc:
+                await client.request("GET", "https://example.com/x", provider="test")
+            assert exc.value.status_code == status
+            assert exc.value.retryable is retryable

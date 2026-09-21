@@ -65,13 +65,49 @@ class Observation:
     error: str | None = None
     terminal: bool = False
 
-    def render(self, *, limit: int = 2000) -> str:
+    #: Lists in an observation are capped by *length*, not by truncating the
+    #: serialised text. Cutting JSON mid-object hands the worker something it
+    #: cannot parse, which is worse than handing it less.
+    MAX_LIST_ITEMS = 12
+
+    def render(self, *, limit: int = 6000) -> str:
         import json
 
         if not self.ok:
             return f"{self.action} failed: {self.error}"
-        body = json.dumps(self.data, ensure_ascii=False, default=str, sort_keys=True)
+        body = json.dumps(
+            _cap(self.data, self.MAX_LIST_ITEMS),
+            ensure_ascii=False,
+            default=str,
+            sort_keys=True,
+        )
+        if len(body) > limit:
+            # Still too big: shed list contents entirely rather than emit
+            # broken JSON, and say how much was withheld.
+            body = json.dumps(
+                _cap(self.data, 3), ensure_ascii=False, default=str, sort_keys=True
+            )
         return f"{self.action} -> {truncate(body, limit)}"
+
+
+def _cap(value: Any, limit: int) -> Any:
+    """Shorten long lists in place of truncating serialised output.
+
+    The list stays homogeneous - a count of what was withheld goes in a
+    sibling key, not as a string appended to a list of objects. A consumer
+    that iterates the list should not have to guess at the type of the last
+    element.
+    """
+    if isinstance(value, dict):
+        capped: dict[str, Any] = {}
+        for key, item in value.items():
+            capped[key] = _cap(item, limit)
+            if isinstance(item, list) and len(item) > limit:
+                capped[f"{key}_omitted"] = len(item) - limit
+        return capped
+    if isinstance(value, list):
+        return [_cap(item, limit) for item in value[:limit]]
+    return value
 
 
 def document_brief(document: EvidenceDocument) -> dict[str, Any]:
@@ -191,6 +227,15 @@ class ActionRuntime:
         )
         documents = self.store.documents.get_many(outcome.document_ids)
         summary = outcome.summary()
+        if outcome.stopped_by and "no configured provider" in outcome.stopped_by:
+            return Observation(
+                action=action,
+                ok=False,
+                error=(
+                    f"{outcome.stopped_by}. Try a different source family, or "
+                    "fetch a known URL directly."
+                ),
+            )
         return Observation(
             action=action,
             ok=True,
@@ -221,6 +266,11 @@ class ActionRuntime:
 
     async def _do_search_web(self, spec: ActionSpec, arguments: dict[str, Any]) -> Observation:
         return await self._search(SourceFamily.WEB, arguments, spec.name)
+
+    async def _do_search_social(
+        self, spec: ActionSpec, arguments: dict[str, Any]
+    ) -> Observation:
+        return await self._search(SourceFamily.SOCIAL, arguments, spec.name)
 
     async def _do_fetch_source(self, spec: ActionSpec, arguments: dict[str, Any]) -> Observation:
         result = await self.search.fetch_source(str(arguments["url"]), family=SourceFamily.WEB)

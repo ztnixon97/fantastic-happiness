@@ -104,7 +104,11 @@ async def cmd_list(context: CliContext, args: argparse.Namespace) -> int:
 async def cmd_search(context: CliContext, args: argparse.Namespace) -> int:
     ledger = context.ledger(args.investigation)
     operation = SearchOperation(
-        context.store, context.registry, investigation_id=args.investigation, ledger=ledger
+        context.store,
+        context.registry,
+        investigation_id=args.investigation,
+        ledger=ledger,
+        failure_threshold=context.config.acquisition.provider_failure_threshold,
     )
     outcome = await operation.search(
         args.query,
@@ -124,6 +128,8 @@ async def cmd_search(context: CliContext, args: argparse.Namespace) -> int:
     print(f"searched {summary['family']} for {args.query!r} via {providers}")
     for provider, error in summary["provider_errors"].items():
         print(f"  ! {provider}: {error}")
+    for provider, reason in summary.get("skipped_providers", {}).items():
+        print(f"  - {provider}: {reason}")
     print(
         f"  {summary['candidates']} candidates -> {summary['new_evidence']} new, "
         f"{summary['duplicates']} duplicate, {summary['derived']} derived, "
@@ -142,7 +148,11 @@ async def cmd_search(context: CliContext, args: argparse.Namespace) -> int:
 async def cmd_fetch(context: CliContext, args: argparse.Namespace) -> int:
     ledger = context.ledger(args.investigation)
     operation = SearchOperation(
-        context.store, context.registry, investigation_id=args.investigation, ledger=ledger
+        context.store,
+        context.registry,
+        investigation_id=args.investigation,
+        ledger=ledger,
+        failure_threshold=context.config.acquisition.provider_failure_threshold,
     )
     result = await operation.fetch_source(args.url, family=FAMILY_CHOICES[args.family])
     if result is None:
@@ -633,7 +643,7 @@ async def cmd_investigate(context: CliContext, args: argparse.Namespace) -> int:
     ledger = context.ledger(investigation.id)
 
     try:
-        model = context.model()
+        model = context.model(prefer_offline=args.model == "offline")
     except ResearchError as exc:
         print(f"no model available: {exc}", file=sys.stderr)
         return 1
@@ -912,6 +922,13 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--max-tasks", type=int, default=None, dest="max_tasks")
     investigate.add_argument("--plan-size", type=int, default=4, dest="plan_size")
     investigate.add_argument("--steps", type=int, default=None, help="steps per task")
+    investigate.add_argument(
+        "--model", choices=["auto", "offline"], default="auto",
+        help=(
+            "'offline' uses the built-in rule-based researcher against whatever "
+            "sources are configured: a smoke test that needs no credential"
+        ),
+    )
     investigate.set_defaults(handler=cmd_investigate)
 
     report = subparsers.add_parser("report", help="write the report from stored state")

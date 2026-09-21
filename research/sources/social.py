@@ -174,13 +174,30 @@ class MastodonSource(SourceAdapter):
             ),
         )
 
+    #: Words that are never the subject of a query, only its framing.
+    _FRAMING = frozenset(
+        {
+            "about", "recent", "latest", "news", "debate", "discussion", "public",
+            "statements", "policy", "analysis", "opinion", "what", "which", "their",
+            "there", "these", "those", "with", "from", "into", "that", "this",
+        }
+    )
+
     def _tag(self, query: ResearchQuery) -> str:
+        """Choose the hashtag to read.
+
+        The first substantive word, not the longest one: people put the
+        subject at the front of a query ("nuclear energy policy debate"), and
+        the longest word is as likely to be framing as subject.
+        """
         explicit = query.filters.get("hashtag")
         if explicit:
             return _HASHTAG_RE.sub("", str(explicit)).lower()
-        words = [word for word in query.text.split() if len(word) > 3]
-        longest = max(words, key=len) if words else query.text
-        return _HASHTAG_RE.sub("", longest).lower()
+        for word in query.text.split():
+            cleaned = _HASHTAG_RE.sub("", word).lower()
+            if len(cleaned) > 3 and cleaned not in self._FRAMING:
+                return cleaned
+        return _HASHTAG_RE.sub("", query.text).lower()
 
     async def search(self, query: ResearchQuery) -> list[SearchHit]:
         tag = self._tag(query)

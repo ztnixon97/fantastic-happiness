@@ -363,3 +363,100 @@ class TestCitationChase:
         assert result.added_document_ids == []
         assert result.already_held == 2
         assert store.documents.count(investigation.id) == 4
+
+
+class TestProviderCircuitBreaker:
+    """A provider that keeps refusing is stopped being asked."""
+
+    async def test_a_repeatedly_failing_provider_is_skipped(self, environment) -> None:
+        store, registry, investigation, _ = environment
+        registry.register(FailingSource())
+        search, _ = operation(environment)
+
+        for _ in range(3):
+            outcome = await search.search("reactor cost", family=SourceFamily.ACADEMIC)
+            assert "broken" in outcome.provider_errors
+
+        outcome = await search.search("reactor cost again", family=SourceFamily.ACADEMIC)
+        assert "broken" not in outcome.provider_errors
+        assert "broken" in outcome.skipped_providers
+        assert "3 consecutive failures" in outcome.skipped_providers["broken"]
+        assert outcome.providers_used == ["papers"], "the working provider still runs"
+
+    async def test_the_skip_is_reported_in_the_summary(self, environment) -> None:
+        store, registry, investigation, _ = environment
+        registry.register(FailingSource())
+        search, _ = operation(environment)
+        for _ in range(4):
+            outcome = await search.search("reactor", family=SourceFamily.ACADEMIC)
+        assert outcome.summary()["skipped_providers"]["broken"]
+
+    async def test_a_provider_that_recovers_is_used_again(self, environment) -> None:
+        store, registry, investigation, _ = environment
+        search, _ = operation(environment)
+        # Two failures then a success: the run of failures is broken, so the
+        # provider is not written off.
+        for _ in range(2):
+            store.queries.record(
+                ResearchQuery(text="x", investigation_id=investigation.id),
+                provider="papers",
+                family=SourceFamily.ACADEMIC,
+                status="failed",
+                error="transient",
+            )
+        outcome = await search.search("reactor cost", family=SourceFamily.ACADEMIC)
+        assert "papers" in outcome.providers_used
+        assert store.queries.consecutive_failures(investigation.id, "papers") == 0
+
+
+class TestMissingProviders:
+    """'Nothing found' and 'nothing looked' are different answers."""
+
+    async def test_a_family_with_no_provider_says_so(self, environment) -> None:
+        store, registry, investigation, _ = environment
+        registry.sources.clear()  # no provider serves anything now
+        search, _ = operation(environment)
+        outcome = await search.search("anything", family=SourceFamily.SOCIAL)
+        assert outcome.results == []
+        assert "no configured provider" in (outcome.stopped_by or "")
+
+    async def test_the_absence_is_recorded_in_the_query_log(self, environment) -> None:
+        store, registry, investigation, _ = environment
+        registry.sources.clear()
+        search, _ = operation(environment)
+        await search.search("anything", family=SourceFamily.SOCIAL)
+        logged = store.queries.list(investigation.id)[0]
+        assert logged["status"] == "no_provider"
+        assert logged["provider"] == "(none)"
+
+    async def test_a_worker_is_told_rather_than_shown_an_empty_result(
+        self, environment
+    ) -> None:
+        from research.agents.runtime import ActionRequest, ActionRuntime
+        from research.budgets import BudgetLedger
+        from research.config import BudgetPolicy
+        from research.models.task import Operation, ResearchRole, ResearchTask
+
+        store, registry, investigation, _ = environment
+        registry.sources.clear()
+        task = store.tasks.create(
+            ResearchTask(
+                id="",
+                investigation_id=investigation.id,
+                role=ResearchRole.SOCIAL,
+                operation=Operation.SEARCH_SOCIAL,
+                objective="find public statements",
+            )
+        )
+        runtime = ActionRuntime(
+            store,
+            registry,
+            investigation_id=investigation.id,
+            task=task,
+            ledger=BudgetLedger(store.budget, investigation.id, BudgetPolicy()),
+        )
+        observation = await runtime.execute(
+            ActionRequest(name="search_social", arguments={"query": "anything"})
+        )
+        assert not observation.ok
+        assert "no configured provider" in observation.error

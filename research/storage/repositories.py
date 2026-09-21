@@ -471,6 +471,25 @@ class SearchQueryLog:
         )
         return [dict(row) for row in rows]
 
+    def consecutive_failures(self, investigation_id: str, provider: str) -> int:
+        """How many times in a row this provider has failed, most recent first.
+
+        Durable rather than in-process: a provider that is refusing this
+        investigation is still refusing it after a restart, and the query log
+        is where that fact already lives.
+        """
+        rows = self.db.query(
+            "SELECT status FROM search_queries WHERE investigation_id = ? AND provider = ? "
+            "ORDER BY id DESC LIMIT 20",
+            (investigation_id, provider),
+        )
+        failures = 0
+        for row in rows:
+            if row["status"] == "ok":
+                break
+            failures += 1
+        return failures
+
     def count(self, investigation_id: str) -> int:
         return int(
             self.db.scalar(

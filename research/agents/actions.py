@@ -110,6 +110,24 @@ search_web = _register(
     )
 )
 
+search_social = _register(
+    ActionSpec(
+        name="search_social",
+        description=(
+            "Search public social posts. A post is evidence that somebody said "
+            "something, and rarely more: record who said it, and whether the account "
+            "is the party it appears to be."
+        ),
+        parameters={
+            "query": "the subject to search for; the first substantive word becomes the tag",
+            "objective": "why this search is being run",
+            "limit": "maximum results (default 10)",
+        },
+        required=("query",),
+        roles=frozenset({ResearchRole.SOCIAL, ResearchRole.SCOUT, ResearchRole.NEWS}),
+    )
+)
+
 fetch_source = _register(
     ActionSpec(
         name="fetch_source",

@@ -120,6 +120,12 @@ class ResearchWorker:
             except ModelError as exc:
                 stopped_by = f"model unavailable: {exc}"
                 break
+            except Exception as exc:  # noqa: BLE001 - third-party client
+                # An adapter can raise anything. One misbehaving call should
+                # cost this task, not the whole investigation, and the reason
+                # is recorded on the task either way.
+                stopped_by = f"model client raised {type(exc).__name__}: {exc}"
+                break
 
             self.ledger.try_spend(Resource.MODEL_CALLS)
             self.ledger.try_spend(Resource.TOKENS, response.usage.total_tokens)

@@ -38,6 +38,8 @@ class SearchOutcome:
     #: Hits whose body could not be retrieved. A search snippet is written by
     #: the search engine, so an unfetchable result is not stored as evidence.
     unretrieved: list[SearchHit] = field(default_factory=list)
+    #: Providers skipped because they have been failing this investigation.
+    skipped_providers: dict[str, str] = field(default_factory=dict)
     stopped_by: str | None = None
 
     @property
@@ -59,6 +61,8 @@ class SearchOutcome:
                 "unretrieved": len(self.unretrieved),
             }
         )
+        if self.skipped_providers:
+            data["skipped_providers"] = dict(self.skipped_providers)
         if self.stopped_by:
             data["stopped_by"] = self.stopped_by
         return data
@@ -77,6 +81,7 @@ class SearchOperation:
         acquirer: EvidenceAcquirer | None = None,
         task_id: str | None = None,
         max_providers_per_search: int = 3,
+        failure_threshold: int = 3,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -85,6 +90,7 @@ class SearchOperation:
         self.acquirer = acquirer or EvidenceAcquirer(store, ledger=ledger)
         self.task_id = task_id
         self.max_providers_per_search = max_providers_per_search
+        self.failure_threshold = failure_threshold
 
     async def search(
         self,
@@ -107,6 +113,31 @@ class SearchOperation:
             outcome.stopped_by = "search budget exhausted"
             return outcome
 
+        sources = self._sources(family, providers)
+        if not sources:
+            # No provider serves this family at all - usually a missing
+            # credential. Saying so is the difference between "nothing exists"
+            # and "nothing was looked at".
+            outcome.stopped_by = (
+                f"no configured provider searches {family}; "
+                "results are absent, not negative"
+            )
+            self.store.queries.record(
+                ResearchQuery(
+                    text=text,
+                    families=[family],
+                    limit=limit,
+                    objective=objective,
+                    investigation_id=self.investigation_id,
+                    task_id=self.task_id,
+                ),
+                provider="(none)",
+                family=family,
+                status="no_provider",
+                error=outcome.stopped_by,
+            )
+            return outcome
+
         query = ResearchQuery(
             text=text,
             families=[family],
@@ -120,7 +151,18 @@ class SearchOperation:
             task_id=self.task_id,
         )
 
-        for source in self._sources(family, providers):
+        for source in sources:
+            failures = self.store.queries.consecutive_failures(
+                self.investigation_id, source.name
+            )
+            if failures >= self.failure_threshold:
+                # It has refused this investigation three times running;
+                # spending the retry budget on a fourth is not optimism, it is
+                # just slower. Recorded, so the report can say what was missing.
+                outcome.skipped_providers[source.name] = (
+                    f"skipped after {failures} consecutive failures"
+                )
+                continue
             hits = await self._run_provider(source, query, family, outcome)
             outcome.hits.extend(hits)
 
@@ -251,6 +293,7 @@ class SearchOperation:
                 fetch_id,
                 ok=False,
                 error=str(exc),
+                status_code=getattr(exc, "status_code", None),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
             if self.ledger is not None:
@@ -304,6 +347,7 @@ class SearchOperation:
                 fetch_id,
                 ok=False,
                 error=str(exc),
+                status_code=getattr(exc, "status_code", None),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
             if self.ledger is not None:
