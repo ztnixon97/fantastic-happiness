@@ -31,6 +31,14 @@ WEIGHTS = {
     "copy": 0.3,
 }
 
+#: What expansion follows unless a caller says otherwise. ``copy`` is not in
+#: it: a copy of a document the query already matched is the same story
+#: again, the ranking folds copies away downstream anyway, and while it was
+#: in here it did real damage - a news copy reached from a marginal lexical
+#: hit would take the top of the ranking away from a direct match. It stays
+#: available for a caller that explicitly wants to see copies.
+DEFAULT_RELATIONS = ("cites", "cited_by", "same_claim", "same_entity")
+
 
 @dataclass(slots=True)
 class GraphHit:
@@ -38,8 +46,8 @@ class GraphHit:
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
 
-    def add(self, relation: str, reason: str) -> None:
-        self.score += WEIGHTS.get(relation, 0.5)
+    def add(self, relation: str, reason: str, *, weight: float = 1.0) -> None:
+        self.score += WEIGHTS.get(relation, 0.5) * weight
         if reason not in self.reasons:
             self.reasons.append(reason)
 
@@ -56,19 +64,28 @@ class GraphExpansion:
         seeds: Sequence[str],
         *,
         limit: int = 20,
-        relations: Sequence[str] = ("cites", "cited_by", "same_claim", "same_entity", "copy"),
+        relations: Sequence[str] = DEFAULT_RELATIONS,
     ) -> list[GraphHit]:
+        """Documents connected to the seeds, best first.
+
+        ``seeds`` is ordered, best first, and that order matters: a neighbour
+        of the strongest seed is a better bet than a neighbour of the
+        weakest, and scoring them alike is what let a document two hops from
+        a marginal match outrank a direct one.
+        """
         if not seeds:
             return []
         seed_set = set(seeds)
+        # 1.0 for the best seed, falling away for the rest.
+        seed_weight = {seed: 1.0 / (1 + position) for position, seed in enumerate(seeds)}
         hits: dict[str, GraphHit] = defaultdict(lambda: GraphHit(document_id=""))
 
-        def record(document_id: str, relation: str, reason: str) -> None:
+        def record(document_id: str, relation: str, reason: str, seed: str = "") -> None:
             if not document_id or document_id in seed_set:
                 return
             hit = hits[document_id]
             hit.document_id = document_id
-            hit.add(relation, reason)
+            hit.add(relation, reason, weight=seed_weight.get(seed, 1.0))
 
         placeholders = ",".join("?" for _ in seed_set)
         params = tuple(seed_set)
@@ -82,9 +99,9 @@ class GraphExpansion:
             ):
                 citing, cited = row["citing_document_id"], row["cited_document_id"]
                 if citing in seed_set and "cites" in relations:
-                    record(cited, "cites", f"cited by {citing}")
+                    record(cited, "cites", f"cited by {citing}", seed=citing)
                 if cited in seed_set and "cited_by" in relations:
-                    record(citing, "cited_by", f"cites {cited}")
+                    record(citing, "cited_by", f"cites {cited}", seed=cited)
 
         if "same_claim" in relations:
             for row in self.store.db.query(

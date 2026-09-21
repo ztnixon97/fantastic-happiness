@@ -22,7 +22,7 @@ from typing import Any, Sequence
 
 from research.models.evidence import EvidenceDocument
 from research.retrieval.embeddings import EmbeddingIndex
-from research.retrieval.fusion import reciprocal_rank_fusion
+from research.retrieval.fusion import FusedHit, reciprocal_rank_fusion
 from research.retrieval.graph import GraphExpansion
 from research.retrieval.lexical import LexicalIndex
 from research.storage.store import ResearchStore
@@ -101,25 +101,52 @@ class CorpusSearch:
         expand: bool = True,
         collapse_copies: bool = True,
         mode: str = "any",
+        retrievers: Sequence[str] | None = None,
     ) -> list[CorpusHit]:
+        """Rank held evidence against a query.
+
+        ``retrievers`` restricts which of the three run, which is what the
+        evaluation harness uses to measure what each one is worth. Leaving it
+        alone uses every retriever available.
+        """
+        use = set(retrievers) if retrievers is not None else {"lexical", "graph", "vector"}
         pool = max(limit * 3, 15)
-        lexical_hits = self.lexical.search(
-            query, investigation_id=self.investigation_id, limit=pool, mode=mode
+        lexical_hits = (
+            self.lexical.search(
+                query, investigation_id=self.investigation_id, limit=pool, mode=mode
+            )
+            if "lexical" in use
+            else []
         )
-        rankings: dict[str, Sequence[str]] = {
-            "lexical": [hit.document_id for hit in lexical_hits]
-        }
+        rankings: dict[str, Sequence[str]] = {}
+        if lexical_hits:
+            rankings["lexical"] = [hit.document_id for hit in lexical_hits]
         reasons: dict[str, list[str]] = {}
         snippets = {hit.document_id: hit.snippet for hit in lexical_hits}
 
-        if expand and lexical_hits:
+        graph_only: list[str] = []
+        if expand and "graph" in use and lexical_hits:
             seeds = [hit.document_id for hit in lexical_hits[:5]]
             graph_hits = self.graph.expand(seeds, limit=pool)
-            rankings["graph"] = [hit.document_id for hit in graph_hits]
+            found_by_words = {hit.document_id for hit in lexical_hits}
+            # Graph evidence is indirect. Where a document was also matched
+            # directly, the connection is a reason to rank it higher and
+            # goes into the fusion. Where it was not, the connection is the
+            # only thing arguing for it, so it is offered after the
+            # documents that actually match - which is what it is: a recall
+            # aid, not a competing opinion about relevance. Fusing the two
+            # cases alike let a paper two hops from a marginal match take
+            # the top of the ranking from a direct one.
+            rankings["graph"] = [
+                hit.document_id for hit in graph_hits if hit.document_id in found_by_words
+            ]
+            graph_only = [
+                hit.document_id for hit in graph_hits if hit.document_id not in found_by_words
+            ]
             for hit in graph_hits:
                 reasons.setdefault(hit.document_id, []).extend(hit.reasons)
 
-        if self.embeddings is not None:
+        if self.embeddings is not None and "vector" in use:
             await self._top_up_vectors()
             # Searched over the whole corpus, not over what lexical found:
             # a document that shares no words with the query is exactly the
@@ -134,6 +161,18 @@ class CorpusSearch:
                 self.degraded = self.embeddings.unavailable
 
         fused = reciprocal_rank_fusion(rankings, weights=DEFAULT_WEIGHTS, reasons=reasons)
+        ranked_ids = {hit.document_id for hit in fused}
+        for position, document_id in enumerate(graph_only, start=1):
+            if document_id not in ranked_ids:
+                fused.append(
+                    FusedHit(
+                        document_id=document_id,
+                        ranks={"graph": position},
+                        # A graph-only hit still has to say why it is here:
+                        # it is the only thing arguing for it.
+                        reasons=list(reasons.get(document_id, [])),
+                    )
+                )
         if not fused:
             return []
 

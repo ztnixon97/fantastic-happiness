@@ -980,6 +980,76 @@ async def cmd_index(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_eval(context: CliContext, args: argparse.Namespace) -> int:
+    """Measure the things that would be wrong if this system were broken."""
+    from research.evaluation.independence import evaluate_independence
+    from research.evaluation.retrieval import evaluate_retrieval
+    from research.evaluation.run import evaluate_run
+
+    what = args.what
+    results: dict[str, Any] = {}
+
+    if what in ("retrieval", "all"):
+        results["retrieval"] = await evaluate_retrieval(
+            embeddings=context.embedding_index() if args.embeddings else None
+        )
+    if what in ("independence", "all"):
+        results["independence"] = await evaluate_independence()
+    if what in ("run", "all"):
+        results["run"] = await evaluate_run(
+            model=context.model(prefer_offline=True), max_tasks=args.max_tasks
+        )
+
+    if args.json:
+        print(as_json(results))
+        return 0
+
+    if "retrieval" in results:
+        report = results["retrieval"]
+        print(f"Retrieval  ({report['queries']} judged queries over "
+              f"{report['documents']} documents)")
+        print(table(report["ablations"], [
+            "retrievers", "recall_at_5", "recall_at_10", "precision_at_5", "mrr", "ndcg_at_10",
+        ]))
+        missed = [row for row in report["per_query"] if row["missed"]]
+        if missed:
+            print("\nnot found in the top ten:")
+            for row in missed:
+                print(f"  {truncate(row['query'], 56):<58} missed {', '.join(row['missed'])}")
+        print()
+
+    if "independence" in results:
+        report = results["independence"]
+        print(f"Independence  ({report['pairs']} judged pairs; "
+              f"positive class is {report['positive_class']!r})")
+        print(table([{
+            "precision": report["precision"], "recall": report["recall"],
+            "f1": report["f1"], "accuracy": report["accuracy"],
+            "counted twice": report["false_negative"], "wrongly merged": report["false_positive"],
+        }], ["precision", "recall", "f1", "accuracy", "counted twice", "wrongly merged"]))
+        for mistake in report["mistakes"]:
+            print(f"  {mistake['pair']:<12} {mistake['error']}"
+                  + (f" - {mistake['note']}" if mistake.get("note") else ""))
+        print()
+
+    if "run" in results:
+        report = results["run"]
+        print(f"End to end  ({report['tasks']} tasks in {report['seconds']}s, "
+              f"stopped: {report['stop_reason']})")
+        for key in (
+            "documents", "independent_sources", "claims", "claims_with_evidence",
+            "claims_with_independent_support", "claims_with_a_primary_record",
+            "claims_with_counterevidence", "excerpts", "open_questions",
+            "model_calls", "tokens", "cost",
+        ):
+            print(f"  {key.replace('_', ' '):<34} {report[key]}")
+        if report["unverifiable_excerpts"]:
+            print("  UNVERIFIABLE EXCERPTS            "
+                  + ", ".join(report["unverifiable_excerpts"])
+                  + "  <- a broken guarantee, not a quality problem")
+    return 0
+
+
 async def cmd_export(context: CliContext, args: argparse.Namespace) -> int:
     """Write an investigation into an Obsidian vault."""
     from research.export.obsidian import ObsidianExporter
@@ -1291,6 +1361,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="how many documents to embed in one pass (default 5000)",
     )
     index.set_defaults(handler=cmd_index)
+
+    evaluate = subparsers.add_parser(
+        "eval", help="measure retrieval, independence and a whole run"
+    )
+    evaluate.add_argument(
+        "what", nargs="?", default="all",
+        choices=["all", "retrieval", "independence", "run"],
+    )
+    evaluate.add_argument(
+        "--embeddings", action="store_true",
+        help="include the vector retriever in the retrieval ablations",
+    )
+    evaluate.add_argument("--max-tasks", type=int, default=8, dest="max_tasks")
+    evaluate.add_argument("--json", action="store_true")
+    evaluate.set_defaults(handler=cmd_eval)
 
     export = subparsers.add_parser("export", help="export an investigation to other tools")
     export_targets = export.add_subparsers(dest="export_command", required=True)

@@ -1,0 +1,63 @@
+{
+  "name": "demo-corpus-retrieval",
+  "corpus": "demo_corpus",
+  "note": "Queries judged by hand against the fifteen documents in the bundled demo corpus. Relevance is binary and generous: a document is relevant if a researcher asking this question would want to have seen it. Judgements are recorded by corpus id (A1, N3, P2) so they survive renumbering of the store.",
+  "queries": [
+    {
+      "query": "levelized cost of electricity for small modular reactors",
+      "relevant": ["A1", "A6"],
+      "note": "The systematic review and the paper on why estimates are optimistic."
+    },
+    {
+      "query": "historical cost escalation in nuclear construction",
+      "relevant": ["A2", "A5"],
+      "note": "The escalation study and the French negative-learning paper."
+    },
+    {
+      "query": "negative learning",
+      "relevant": ["A5"],
+      "note": "A term of art appearing in one title."
+    },
+    {
+      "query": "do factory built modules get cheaper with experience",
+      "relevant": ["A3", "A7", "A5"],
+      "note": "Learning rates, factory cost declines, and the paper that contradicts both."
+    },
+    {
+      "query": "electricity demand from AI data centres",
+      "relevant": ["A4", "N4", "N5"]
+    },
+    {
+      "query": "NuScale project termination",
+      "relevant": ["N1", "N2", "N3"],
+      "note": "One story carried by three outlets; all three are relevant, and they are one source."
+    },
+    {
+      "query": "why did the flagship reactor project end",
+      "relevant": ["N1", "N2", "N3"],
+      "note": "The same event asked without naming the company."
+    },
+    {
+      "query": "regulatory design approval",
+      "relevant": ["P1"]
+    },
+    {
+      "query": "what risks does the company disclose to investors",
+      "relevant": ["P2"],
+      "note": "Asked in the words an analyst would use, not the filing's own."
+    },
+    {
+      "query": "technology companies signing nuclear power agreements",
+      "relevant": ["N4", "N5", "P3"]
+    },
+    {
+      "query": "vendor estimates compared with independent analysts",
+      "relevant": ["A1", "A6"],
+      "note": "The distinction is in the abstracts, not the titles."
+    },
+    {
+      "query": "first of a kind costs",
+      "relevant": ["A1", "A6", "A2"]
+    }
+  ]
+}

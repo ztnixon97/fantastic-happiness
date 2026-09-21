@@ -24,6 +24,19 @@ from research.storage.database import Database
 #: language, so they are stripped rather than passed through - a stray quote
 #: would otherwise turn a search into a syntax error.
 _FTS_SPECIAL = re.compile(r'["*():^{}\[\]~\\-]')
+
+#: A hit scoring less than this fraction of the best hit is dropped.
+#:
+#: FTS5 in "any" mode returns every document containing any term, so a
+#: twelve-word question matches most of a small corpus - and BM25 separates
+#: the real matches from the incidental ones by an order of magnitude or
+#: more. Reciprocal rank fusion then throws those scores away and keeps only
+#: positions, which promotes a document that matched on one stray word to a
+#: respectable rank, where any second signal can lift it over a direct
+#: match. Measured on the bundled query set: without this, adding graph
+#: expansion took mean reciprocal rank from 1.00 to 0.79. A retriever should
+#: return its matches, not its corpus in order.
+MIN_SCORE_RATIO = 0.05
 _TOKEN = re.compile(r"[\w][\w\'-]*", re.UNICODE)
 
 
@@ -75,6 +88,7 @@ class LexicalIndex:
         investigation_id: str | None = None,
         limit: int = 20,
         mode: str = "any",
+        min_score_ratio: float | None = None,
     ) -> list[LexicalHit]:
         """Rank held documents against a query by BM25.
 
@@ -106,7 +120,7 @@ class LexicalIndex:
             rows = self.db.query(
                 sql, tuple([prepare_query(query, mode="any"), *params[1:]])
             )
-        return [
+        hits = [
             LexicalHit(
                 document_id=row["document_id"],
                 # BM25 returns a negative score where lower is better; flip it
@@ -116,3 +130,16 @@ class LexicalIndex:
             )
             for row in rows
         ]
+        return _drop_the_tail(
+            hits, MIN_SCORE_RATIO if min_score_ratio is None else min_score_ratio
+        )
+
+
+def _drop_the_tail(hits: list[LexicalHit], ratio: float) -> list[LexicalHit]:
+    if not hits or ratio <= 0:
+        return hits
+    best = max(hit.score for hit in hits)
+    if best <= 0:
+        return hits
+    cutoff = best * ratio
+    return [hit for hit in hits if hit.score >= cutoff]

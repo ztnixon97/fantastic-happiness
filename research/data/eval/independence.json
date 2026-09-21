@@ -1,0 +1,76 @@
+{
+  "name": "demo-corpus-independence",
+  "corpus": "demo_corpus",
+  "note": "Pairs of documents from the bundled corpus, judged by hand for whether they are independent sources. This is the capability nothing else in the field has, so it is the one worth measuring: getting it wrong means ten outlets carrying one wire story are counted as ten confirmations. 'independent' is the negative class.",
+  "pairs": [
+    {
+      "left": "N1",
+      "right": "N3",
+      "independent": false,
+      "note": "Daily Bulletin runs the Reuters copy near enough verbatim."
+    },
+    {
+      "left": "N1",
+      "right": "N2",
+      "independent": false,
+      "note": "Local Gazette rewrites the same story and credits it."
+    },
+    {
+      "left": "N2",
+      "right": "N3",
+      "independent": false,
+      "note": "Two copies of one story are not independent of each other either."
+    },
+    {
+      "left": "N4",
+      "right": "N5",
+      "independent": false,
+      "note": "TechSite is written from the AP report."
+    },
+    {
+      "left": "N1",
+      "right": "N4",
+      "independent": true,
+      "note": "Different stories, different events."
+    },
+    {
+      "left": "A1",
+      "right": "A2",
+      "independent": true,
+      "note": "One cites the other; citing is not copying."
+    },
+    {
+      "left": "A1",
+      "right": "A6",
+      "independent": true,
+      "note": "Two papers reaching a similar conclusion separately."
+    },
+    {
+      "left": "A3",
+      "right": "A7",
+      "independent": true
+    },
+    {
+      "left": "N4",
+      "right": "P3",
+      "independent": false,
+      "note": "The press release is the announcing party's own material behind the story."
+    },
+    {
+      "left": "P1",
+      "right": "P2",
+      "independent": true,
+      "note": "A regulator and a company are not one source."
+    },
+    {
+      "left": "A5",
+      "right": "N1",
+      "independent": true
+    },
+    {
+      "left": "P2",
+      "right": "N1",
+      "independent": true
+    }
+  ]
+}

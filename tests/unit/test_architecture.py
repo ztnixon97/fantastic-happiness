@@ -35,6 +35,7 @@ LAYERS = {
     "agents": 6,
     "orchestration": 7,
     "synthesis": 8,
+    "evaluation": 8,
     "cli": 9,
 }
 
