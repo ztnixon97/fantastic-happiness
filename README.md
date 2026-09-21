@@ -113,9 +113,16 @@ providers changed the code. Some of what it found:
 - Crossref rejects a whole request — HTTP 400, no results — if one field in
   `select` is not available on that route. `language` is returned in full
   records but is not selectable, so *every* Crossref search was failing.
-- arXiv treats a quoted string as an exact phrase, so passing a research
-  question as one phrase matched nothing; ANDing every term over-restricts
-  too. The unquoted term list is what works.
+- arXiv needs its terms combined deliberately. A quoted phrase matches
+  nothing; a bag of words matches on any term and returns whatever is most
+  cited for the commonest one — "small modular nuclear reactors economically
+  competitive" came back full of neutrino physics; ANDing every term of a
+  long query returns nothing at all. ANDing the leading four terms returns
+  the reactor-economics literature that was asked for.
+- OpenAlex answers a rate-limited call with `Retry-After: 76939` — about 21
+  hours. The client was capping that at 30s and retrying twice, so one
+  refusing provider cost 61 seconds of every search. A `Retry-After` longer
+  than a few seconds now means "unavailable", not "wait".
 - Federal sites label the padlock icon in their banner with an SVG
   `<title>Lock</title>`, which the extractor was reading as the document
   title.
@@ -126,7 +133,17 @@ providers changed the code. Some of what it found:
   silent.
 - An empty result and an absent provider are different answers. With no
   keyed web provider configured, web search has no provider at all; that is
-  now said plainly rather than returned as "nothing found".
+  now said plainly rather than returned as "nothing found". It also gets its
+  own stopping reason: an investigation that ends because its sources were
+  unreachable reports `sources_unavailable` — "a gap in coverage, not a
+  finding" — rather than claiming diminishing returns on a topic it never
+  searched.
+
+The autonomous runs above used `--model offline`, the built-in rule-based
+researcher. It exercises the whole loop without a credential, but it is a
+decision rule, not a researcher: writing a good query is exactly the semantic
+judgement a real model supplies, and the difference is visible in what comes
+back.
 
 ## Core idea
 

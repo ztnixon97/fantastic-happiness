@@ -356,10 +356,17 @@ have prompted:
   is present in full records but is not selectable there, so every Crossref
   search was returning nothing. `SELECT_FIELDS` is now a named constant with
   that fact written next to it.
-* **arXiv phrase-quotes whatever you send.** A research question passed as
-  one quoted phrase matches nothing; ANDing every term is nearly as bad. The
-  adapter sends the unquoted term list and exposes a `phrase` filter for the
-  cases that want one.
+* **arXiv needs its terms combined deliberately.** A quoted phrase matches
+  nothing. A bag of words matches on *any* term and ranks by citation, so
+  "small modular nuclear reactors economically competitive" returns neutrino
+  physics. ANDing every term of a long query returns nothing. The adapter
+  ANDs the leading four terms - the ones that carry the subject - and exposes
+  a `phrase` filter for callers that want an exact phrase.
+* **`Retry-After` can mean tomorrow.** OpenAlex answers a rate-limited call
+  asking to be retried in about 21 hours. The client capped the wait at 30s
+  and retried twice, so one refusing provider cost 61 seconds of every
+  search. A `Retry-After` beyond a few seconds is now treated as
+  unavailability rather than as a delay to honour.
 * **Real pages have `<title>` inside `<svg>`.** Federal sites label their
   banner padlock with `<title>Lock</title>`, which the extractor was reading
   as the document title. A `<title>` inside a skipped element is now ignored.
@@ -372,6 +379,11 @@ have prompted:
   now recorded as `no_provider` and reported to the worker as a failure with
   a suggestion, rather than as an empty result it would read as evidence of
   absence.
+* **A failure to look is not a finding.** An investigation whose searches
+  could not run was stopping with "diminishing returns", which tells a reader
+  the topic was exhausted. Unreachable providers now stop the run as
+  `sources_unavailable`, and the diminishing-returns rule counts only
+  searches that actually ran.
 * **Truncating an observation breaks it.** Observations were being cut to a
   character budget, which turns JSON into something a worker cannot parse -
   and the worker then behaves as though the search found nothing. Lists are

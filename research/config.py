@@ -94,6 +94,12 @@ class AcquisitionPolicy:
         "application/atom+xml",
         "application/rss+xml",
     )
+    #: A ``Retry-After`` longer than this means "not now, and not soon": the
+    #: request fails immediately instead of sleeping. Providers really do ask
+    #: for hours (OpenAlex answers a rate-limited call with ~21 hours), and
+    #: waiting even 30 seconds for one provider while others are answering is
+    #: never the right trade inside a research run.
+    max_retry_after_seconds: float = 5.0
     #: Consecutive failures from one provider before an investigation stops
     #: calling it. A rate-limited or unreachable provider otherwise costs the
     #: full retry budget on every single search.

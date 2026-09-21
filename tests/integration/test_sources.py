@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -462,13 +463,16 @@ class TestProviderQuirks:
         assert "language" not in SELECT_FIELDS
         assert "DOI" in SELECT_FIELDS and "abstract" in SELECT_FIELDS
 
-    async def test_arxiv_does_not_phrase_quote_a_whole_question(self) -> None:
+    async def test_arxiv_ands_the_leading_terms(self) -> None:
         requests: list[httpx.Request] = []
         source = ArxivSource(client_for({"/query": fixture("arxiv_search.xml")}, record=requests))
         await source.search(query("small modular reactor levelized cost of electricity"))
-        sent = str(requests[0].url)
-        assert "all%3Asmall" in sent or "all:small" in sent
-        assert "%22" not in sent, "a quoted phrase matches nothing on arXiv"
+        sent = unquote(str(requests[0].url)).replace("+", " ")
+        # A bag of words matches on any term and returns whatever is most
+        # cited for the commonest one; ANDing every term returns nothing.
+        assert "all:small AND all:modular AND all:reactor AND all:levelized" in sent
+        assert "all:electricity" not in sent, "a long AND chain over-restricts"
+        assert '"' not in sent, "a quoted phrase matches nothing on arXiv"
 
     async def test_arxiv_quotes_when_a_phrase_is_asked_for(self) -> None:
         requests: list[httpx.Request] = []

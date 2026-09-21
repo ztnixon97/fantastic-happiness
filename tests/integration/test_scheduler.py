@@ -297,3 +297,84 @@ class TestScheduler:
         documents = store.documents.list(investigation.id, limit=500)
         groups = independent_documents(store.documents, [d.id for d in documents])
         assert len(groups) < len(documents)
+
+
+class TestUnavailableSources:
+    """'Could not look' is not 'looked and found nothing'."""
+
+    def log(self, store, investigation, provider: str, status: str, results: int = 0) -> None:
+        from research.models.query import ResearchQuery
+
+        store.queries.record(
+            ResearchQuery(text="q", investigation_id=investigation.id),
+            provider=provider,
+            family=SourceFamily.ACADEMIC,
+            status=status,
+            result_count=results,
+        )
+
+    def test_failing_searches_stop_for_a_different_reason(self, store, investigation) -> None:
+        for _ in range(4):
+            self.log(store, investigation, "openalex", "failed")
+        store.tasks.create(
+            ResearchTask(
+                id="",
+                investigation_id=investigation.id,
+                role=ResearchRole.ACADEMIC,
+                operation=Operation.SEARCH_ACADEMIC,
+                objective="keep going",
+            )
+        )
+        decision = StoppingRules(store, investigation.id, ledger_for(store, investigation)).evaluate()
+        assert decision.reason is StopReason.SOURCES_UNAVAILABLE
+        assert "gap in coverage, not a finding" in decision.detail
+        assert "openalex" in decision.detail
+
+    def test_missing_providers_count_as_unavailable(self, store, investigation) -> None:
+        for _ in range(4):
+            self.log(store, investigation, "(none)", "no_provider")
+        store.tasks.create(
+            ResearchTask(
+                id="",
+                investigation_id=investigation.id,
+                role=ResearchRole.SCOUT,
+                operation=Operation.SEARCH_WEB,
+                objective="keep going",
+            )
+        )
+        decision = StoppingRules(store, investigation.id, ledger_for(store, investigation)).evaluate()
+        assert decision.reason is StopReason.SOURCES_UNAVAILABLE
+
+    def test_empty_but_successful_searches_are_diminishing_returns(
+        self, store, investigation
+    ) -> None:
+        for _ in range(4):
+            self.log(store, investigation, "crossref", "ok", results=0)
+        store.tasks.create(
+            ResearchTask(
+                id="",
+                investigation_id=investigation.id,
+                role=ResearchRole.ACADEMIC,
+                operation=Operation.SEARCH_ACADEMIC,
+                objective="keep going",
+            )
+        )
+        decision = StoppingRules(store, investigation.id, ledger_for(store, investigation)).evaluate()
+        assert decision.reason is StopReason.DIMINISHING_RETURNS
+
+    def test_a_mix_that_is_mostly_working_keeps_going(self, store, investigation) -> None:
+        self.log(store, investigation, "openalex", "failed")
+        for _ in range(3):
+            self.log(store, investigation, "crossref", "ok", results=5)
+        store.tasks.create(
+            ResearchTask(
+                id="",
+                investigation_id=investigation.id,
+                role=ResearchRole.ACADEMIC,
+                operation=Operation.SEARCH_ACADEMIC,
+                objective="keep going",
+            )
+        )
+        assert not StoppingRules(
+            store, investigation.id, ledger_for(store, investigation)
+        ).evaluate().should_stop

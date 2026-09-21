@@ -26,6 +26,10 @@ class StopReason(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     RUNTIME_EXHAUSTED = "runtime_exhausted"
     UNRESOLVABLE_UNCERTAINTY = "unresolvable_uncertainty"
+    #: The sources needed were unreachable - rate-limited, unconfigured or
+    #: down. Distinct from diminishing returns: nothing was exhausted, the
+    #: looking simply could not happen.
+    SOURCES_UNAVAILABLE = "sources_unavailable"
     NO_OPEN_TASKS = "no_open_tasks"
     OPERATOR_STOPPED = "operator_stopped"
     ERROR = "error"

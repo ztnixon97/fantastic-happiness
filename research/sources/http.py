@@ -282,7 +282,18 @@ class SafeHttpClient:
 
             if response.status_code in RETRYABLE_STATUS and attempt < self.policy.max_retries:
                 retry_after = self._retry_after(response)
+                status = response.status_code
                 await response.aclose()
+                if (
+                    retry_after is not None
+                    and retry_after > self.policy.max_retry_after_seconds
+                ):
+                    raise SourceUnavailable(
+                        f"{provider} asked to be retried in {retry_after:.0f}s, which is "
+                        "longer than this run will wait; treating it as unavailable",
+                        provider=provider,
+                        status_code=status,
+                    )
                 await self._backoff(attempt, retry_after)
                 attempt += 1
                 continue

@@ -12,6 +12,8 @@ source layer knows the difference.
 
 from __future__ import annotations
 
+import re
+from collections import Counter
 from typing import Any
 
 from research.normalize.document import build_document
@@ -31,11 +33,23 @@ from research.sources.classify import classify_url
 
 
 def _score(entry: dict[str, Any], terms: list[str]) -> int:
+    """Count whole-word matches.
+
+    Substring counting scores "work" against "framework", which makes a
+    fixture corpus look relevant to queries it has nothing to do with - and
+    makes tests pass for the wrong reason.
+    """
     haystack = " ".join(
         str(entry.get(key, ""))
         for key in ("title", "abstract", "snippet", "text", "publisher", "venue", "keywords")
     ).casefold()
-    return sum(haystack.count(term) for term in terms)
+    words = Counter(_fold(word) for word in re.findall(r"[a-z0-9]+", haystack))
+    return sum(words.get(_fold(term), 0) for term in terms)
+
+
+def _fold(word: str) -> str:
+    """Fold a trailing plural so 'cost' matches 'costs' but not 'framework'."""
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
 
 
 def _terms(text: str) -> list[str]:

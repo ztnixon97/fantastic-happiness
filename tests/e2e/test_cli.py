@@ -260,8 +260,8 @@ class TestAutonomousRun:
 
     def test_the_run_is_reported_as_structured_data(self, db, capsys) -> None:
         assert run(
-            db, "--offline", "--json", "investigate", "Are SMRs competitive?",
-            "--max-tasks", "2", "--steps", "4",
+            db, "--offline", "--json", "investigate",
+            "Are SMRs competitive for data centres?", "--max-tasks", "2", "--steps", "4",
         ) == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["tasks_run"] == 2
@@ -282,7 +282,7 @@ class TestAutonomousRun:
         assert payload["documents"] > 0
         assert payload["independent_sources"] <= payload["documents"]
         assert set(payload["stopping_rules"]) == {
-            "budget", "runtime", "open_tasks", "diminishing_returns", "evidence"
+            "budget", "runtime", "open_tasks", "sources", "diminishing_returns", "evidence"
         }
 
     def test_claims_made_autonomously_are_inspectable(self, investigated, capsys) -> None:
@@ -312,14 +312,16 @@ class TestReportCommand:
         assert "independent sources" in report
 
     def test_the_report_can_be_written_to_a_file(self, db, tmp_path, capsys) -> None:
-        run(db, "--offline", "investigate", "A question", "--max-tasks", "2", "--steps", "4")
+        run(db, "--offline", "investigate", "Are SMRs competitive for data centres?",
+            "--max-tasks", "2", "--steps", "4")
         capsys.readouterr()
         destination = tmp_path / "report.md"
         assert run(db, "report", "investigation:1", "--no-summary", "--output", str(destination)) == 0
         assert destination.read_text().startswith("# ")
 
     def test_report_data_is_available_as_json(self, db, capsys) -> None:
-        run(db, "--offline", "investigate", "A question", "--max-tasks", "2", "--steps", "4")
+        run(db, "--offline", "investigate", "Are SMRs competitive for data centres?",
+            "--max-tasks", "2", "--steps", "4")
         capsys.readouterr()
         assert run(db, "--json", "report", "investigation:1", "--no-summary") == 0
         payload = json.loads(capsys.readouterr().out)

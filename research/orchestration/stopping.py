@@ -54,6 +54,7 @@ class StoppingRules:
             self._budget_exhausted,
             self._runtime_exhausted,
             self._no_open_tasks,
+            self._sources_unavailable,
             self._diminishing_returns,
             self._evidence_sufficient,
         ):
@@ -107,6 +108,31 @@ class StoppingRules:
         )
 
     # -- evidence-based -------------------------------------------------
+    def _sources_unavailable(self) -> StopDecision:
+        """Recent searches failed rather than came back empty.
+
+        'We looked and found nothing' and 'we could not look' are different
+        conclusions, and only the first is evidence about the world. Reporting
+        an unreachable provider as diminishing returns would tell a reader the
+        topic was exhausted when it was never searched.
+        """
+        recent = self.store.queries.list(self.investigation_id, limit=DILIGENCE_WINDOW)
+        if len(recent) < DILIGENCE_WINDOW:
+            return CONTINUE
+        unavailable = [query for query in recent if query["status"] != "ok"]
+        if len(unavailable) / len(recent) < self.diminishing_threshold:
+            return CONTINUE
+        providers = sorted({query["provider"] for query in unavailable})
+        return StopDecision(
+            should_stop=True,
+            reason=StopReason.SOURCES_UNAVAILABLE,
+            detail=(
+                f"{len(unavailable)} of the last {len(recent)} searches could not run "
+                f"({', '.join(providers)}); this is a gap in coverage, not a finding"
+            ),
+            evidence={"providers": providers},
+        )
+
     def _diminishing_returns(self) -> StopDecision:
         """New work is mostly returning material already held.
 
@@ -128,14 +154,16 @@ class StoppingRules:
             )
 
         recent = self.store.queries.list(self.investigation_id, limit=DILIGENCE_WINDOW)
-        if len(recent) < DILIGENCE_WINDOW:
+        # Only searches that actually ran say anything about the topic.
+        ran = [query for query in recent if query["status"] == "ok"]
+        if len(ran) < DILIGENCE_WINDOW:
             return CONTINUE
-        barren = sum(1 for query in recent if not query["result_count"])
-        if barren / len(recent) >= self.diminishing_threshold:
+        barren = sum(1 for query in ran if not query["result_count"])
+        if barren / len(ran) >= self.diminishing_threshold:
             return StopDecision(
                 should_stop=True,
                 reason=StopReason.DIMINISHING_RETURNS,
-                detail=f"{barren} of the last {len(recent)} searches returned nothing",
+                detail=f"{barren} of the last {len(ran)} searches returned nothing",
             )
         return CONTINUE
 
@@ -169,6 +197,7 @@ class StoppingRules:
             "open_tasks": len(
                 self.store.tasks.list(self.investigation_id, status=TaskStatus.PENDING)
             ),
+            "sources": self._sources_unavailable().detail or "providers are answering",
             "diminishing_returns": (
                 self._diminishing_returns().detail or "still finding new material"
             ),

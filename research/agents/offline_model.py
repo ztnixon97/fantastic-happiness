@@ -23,12 +23,23 @@ from research.llm.scripted import RuleBasedModel
 
 _OBSERVATION_RE = re.compile(r"^(?P<action>[a-z_]+) -> (?P<payload>\{.*)$", re.DOTALL)
 _CONTENT_RE = re.compile(r"CONTENT:\n(.*?)\n</external_evidence>", re.DOTALL)
+#: Words that describe the *task* rather than the subject. Leaving them in
+#: the query is not harmless: "peer-reviewed work says nuclear reactors" drags
+#: an academic search toward reactor physics and away from the economics that
+#: was actually asked about.
 _STOPWORDS = frozenset(
     {
         "the", "a", "an", "of", "for", "and", "or", "to", "in", "on", "what",
         "which", "that", "this", "is", "are", "was", "were", "establish",
         "find", "identify", "determine", "whether", "how", "why", "their",
         "its", "with", "from", "about", "into", "look", "search",
+        "work", "works", "says", "said", "reported", "reports", "recently",
+        "recent", "underlying", "records", "record", "behind", "evidence",
+        "picture", "emerging", "contradicts", "reach", "trace", "peer",
+        "reviewed", "peer-reviewed", "literature", "sources", "source",
+        "public", "statements", "material", "materials", "regulatory",
+        "filings", "agreements", "test", "claim", "objective",
+        "has", "have", "had", "been", "being", "will", "would", "should",
     }
 )
 

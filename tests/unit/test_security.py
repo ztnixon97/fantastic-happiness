@@ -207,3 +207,49 @@ class TestFailureRecords:
                 await client.request("GET", "https://example.com/x", provider="test")
             assert exc.value.status_code == status
             assert exc.value.retryable is retryable
+
+
+class TestRetryAfter:
+    """A provider asking for a long wait is unavailable, not worth sleeping on."""
+
+    async def test_a_long_retry_after_fails_immediately(self) -> None:
+        attempts: list[float] = []
+
+        async def record_sleep(seconds: float) -> None:
+            attempts.append(seconds)
+
+        client = SafeHttpClient(
+            AcquisitionPolicy(per_host_min_interval_seconds=0.0, max_retry_after_seconds=5.0),
+            transport=httpx.MockTransport(
+                # OpenAlex answers a rate-limited call with about 21 hours.
+                lambda request: httpx.Response(429, headers={"retry-after": "76939"})
+            ),
+            sleep=record_sleep,
+        )
+        with pytest.raises(SourceUnavailable) as exc:
+            await client.request("GET", "https://example.com/x", provider="test")
+        assert attempts == [], "nothing was slept on"
+        assert "longer than this run will wait" in str(exc.value)
+        assert exc.value.status_code == 429
+
+    async def test_a_short_retry_after_is_honoured(self) -> None:
+        slept: list[float] = []
+        calls: list[int] = []
+
+        async def record_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"retry-after": "2"})
+            return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+        client = SafeHttpClient(
+            AcquisitionPolicy(per_host_min_interval_seconds=0.0, max_retry_after_seconds=5.0),
+            transport=httpx.MockTransport(handler),
+            sleep=record_sleep,
+        )
+        response = await client.request("GET", "https://example.com/x", provider="test")
+        assert response.status_code == 200
+        assert slept == [2.0]

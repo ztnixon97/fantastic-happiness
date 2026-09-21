@@ -7,6 +7,7 @@ as peer-reviewed, even when a published DOI is attached.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from xml.etree import ElementTree
 
@@ -21,6 +22,14 @@ from research.sources.base import SourceCapabilities
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV = "{http://arxiv.org/schemas/atom}"
 _MAX_RESULTS = 50
+
+#: Terms to combine with AND. Measured against the live API: a bag of words
+#: matches on any term and returns whatever is most cited for the commonest
+#: one - "small modular nuclear reactors economically competitive" comes back
+#: full of neutrino physics - while ANDing every term of a long query returns
+#: nothing at all. The leading terms carry the subject; four is where
+#: precision and recall meet.
+_MAX_ANDED_TERMS = 4
 
 
 class ArxivSource(AcademicAdapter):
@@ -48,8 +57,7 @@ class ArxivSource(AcademicAdapter):
         # matches a research question, and ANDing every term over-restricts a
         # long one. The unquoted term list is what actually works; a caller
         # that really wants a phrase asks for one.
-        phrase = bool(query.filters.get("phrase"))
-        search_query = f'all:"{query.text}"' if phrase else f"all:{query.text}"
+        search_query = self._build_query(query)
         if query.published_after or query.published_before:
             start = _stamp(query.published_after, "190001010000")
             end = _stamp(query.published_before, "299901010000")
@@ -69,6 +77,15 @@ class ArxivSource(AcademicAdapter):
             accept="application/atom+xml",
         )
         return self._parse_feed(response.text, endpoint=endpoint)
+
+    def _build_query(self, query: ResearchQuery) -> str:
+        """Turn a research query into something arXiv answers usefully."""
+        if query.filters.get("phrase"):
+            return f'all:"{query.text}"'
+        terms = [term for term in re.findall(r"[\w-]+", query.text) if len(term) > 2]
+        if not terms:
+            return f"all:{query.text}"
+        return " AND ".join(f"all:{term}" for term in terms[:_MAX_ANDED_TERMS])
 
     def _parse_feed(self, xml_text: str, *, endpoint: str) -> list[SearchHit]:
         try:
