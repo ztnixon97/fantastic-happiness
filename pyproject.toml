@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research"
+version = "0.1.0"
+description = "An evidence-driven research environment for autonomous investigations"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+research = "research.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["research*"]
+
+[tool.setuptools.package-data]
+research = ["data/*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:research.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "SIM", "ARG"]
+ignore = [
+    # Protocol conformance: adapters that cannot serve a call still have to
+    # accept its arguments.
+    "ARG002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests favour descriptive names and literal fixtures over short lines, and
+# mock handlers ignore the request they are handed.
+"tests/**" = ["E501", "ARG001", "ARG005"]

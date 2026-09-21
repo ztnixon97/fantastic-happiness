@@ -1,0 +1,20 @@
+{
+ "articles": [
+  {
+   "url": "https://www.reuters.com/business/energy/nuscale-terminate-2023-11-08/",
+   "title": "NuScale and utility group terminate flagship SMR project",
+   "seendate": "20231108T163000Z",
+   "domain": "reuters.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.localgazette.example/energy/nuscale-project-ends",
+   "title": "NuScale project ends after subscription shortfall",
+   "seendate": "20231108T190000Z",
+   "domain": "localgazette.example",
+   "language": "English",
+   "sourcecountry": "United States"
+  }
+ ]
+}

@@ -1,0 +1,99 @@
+{
+ "meta": {
+  "count": 2
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W2741809807",
+   "doi": "https://doi.org/10.1016/j.enpol.2024.114001",
+   "display_name": "Levelized cost projections for small modular reactors",
+   "publication_date": "2024-04-12",
+   "publication_year": 2024,
+   "type": "article",
+   "language": "en",
+   "cited_by_count": 37,
+   "is_retracted": false,
+   "open_access": {
+    "is_oa": true
+   },
+   "primary_location": {
+    "source": {
+     "display_name": "Energy Policy"
+    },
+    "landing_page_url": "https://doi.org/10.1016/j.enpol.2024.114001"
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "R. Okafor",
+      "orcid": "https://orcid.org/0000-0002-1825-0097"
+     }
+    },
+    {
+     "author": {
+      "display_name": "L. Meng"
+     }
+    }
+   ],
+   "abstract_inverted_index": {
+    "We": [
+     0
+    ],
+    "review": [
+     1
+    ],
+    "42": [
+     2
+    ],
+    "cost": [
+     3
+    ],
+    "estimates": [
+     4
+    ]
+   },
+   "referenced_works": [
+    "https://openalex.org/W111",
+    "https://openalex.org/W222"
+   ],
+   "ids": {
+    "pmid": "https://pubmed.ncbi.nlm.nih.gov/12345678"
+   }
+  },
+  {
+   "id": "https://openalex.org/W999",
+   "doi": null,
+   "display_name": "Data center load growth and firm generation requirements",
+   "publication_date": "2025-01-30",
+   "type": "preprint",
+   "primary_location": {
+    "source": {
+     "display_name": "arXiv"
+    },
+    "landing_page_url": "https://arxiv.org/abs/2501.11234"
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "J. Whitfield"
+     }
+    }
+   ],
+   "abstract_inverted_index": {
+    "We": [
+     0
+    ],
+    "model": [
+     1
+    ],
+    "load": [
+     2
+    ],
+    "growth": [
+     3
+    ]
+   },
+   "referenced_works": []
+  }
+ ]
+}

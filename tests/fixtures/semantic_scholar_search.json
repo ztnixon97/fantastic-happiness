@@ -1,0 +1,34 @@
+{
+ "total": 1,
+ "data": [
+  {
+   "paperId": "abc123",
+   "title": "Levelized cost projections for small modular reactors",
+   "abstract": "We review 42 published cost estimates.",
+   "venue": "Energy Policy",
+   "year": 2024,
+   "publicationDate": "2024-04-12",
+   "authors": [
+    {
+     "authorId": "1",
+     "name": "R. Okafor"
+    }
+   ],
+   "publicationTypes": [
+    "JournalArticle",
+    "Review"
+   ],
+   "citationCount": 37,
+   "referenceCount": 60,
+   "isOpenAccess": true,
+   "openAccessPdf": {
+    "url": "https://example.org/paper.pdf"
+   },
+   "externalIds": {
+    "DOI": "10.1016/j.enpol.2024.114001",
+    "PubMed": "12345678"
+   },
+   "url": "https://www.semanticscholar.org/paper/abc123"
+  }
+ ]
+}

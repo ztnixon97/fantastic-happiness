@@ -1,0 +1,75 @@
+{
+ "status": "ok",
+ "message": {
+  "items": [
+   {
+    "DOI": "10.1016/J.ENPOL.2024.114001",
+    "title": [
+     "Levelized cost projections for small modular reactors"
+    ],
+    "container-title": [
+     "Energy Policy"
+    ],
+    "publisher": "Elsevier",
+    "type": "journal-article",
+    "language": "en",
+    "issued": {
+     "date-parts": [
+      [
+       2024,
+       4,
+       12
+      ]
+     ]
+    },
+    "abstract": "<jats:p>Abstract We review 42 published cost estimates.</jats:p>",
+    "author": [
+     {
+      "given": "Rachel",
+      "family": "Okafor",
+      "ORCID": "https://orcid.org/0000-0002-1825-0097"
+     },
+     {
+      "given": "Li",
+      "family": "Meng"
+     }
+    ],
+    "URL": "https://doi.org/10.1016/j.enpol.2024.114001",
+    "is-referenced-by-count": 37,
+    "reference": [
+     {
+      "DOI": "10.1016/j.joule.2021.06.004"
+     },
+     {
+      "unstructured": "some book, no doi"
+     }
+    ]
+   },
+   {
+    "DOI": "10.1016/j.erss.2023.103211",
+    "title": [
+     "Why SMR cost estimates are systematically optimistic"
+    ],
+    "container-title": [
+     "Energy Research & Social Science"
+    ],
+    "type": "journal-article",
+    "issued": {
+     "date-parts": [
+      [
+       2023,
+       8
+      ]
+     ]
+    },
+    "author": [
+     {
+      "given": "N.",
+      "family": "Farooq"
+     }
+    ],
+    "URL": "https://doi.org/10.1016/j.erss.2023.103211"
+   }
+  ]
+ }
+}

@@ -1,0 +1,46 @@
+{
+ "results": [
+  {
+   "id": "https://openalex.org/W111",
+   "doi": "https://doi.org/10.1016/j.joule.2021.06.004",
+   "display_name": "Historical cost escalation in nuclear construction",
+   "publication_date": "2021-07-01",
+   "type": "article",
+   "cited_by_count": 210,
+   "primary_location": {
+    "source": {
+     "display_name": "Joule"
+    }
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "S. Petrova"
+     }
+    }
+   ],
+   "referenced_works": []
+  },
+  {
+   "id": "https://openalex.org/W222",
+   "doi": "https://doi.org/10.1016/j.enpol.2010.03.029",
+   "display_name": "Negative learning in the French nuclear programme",
+   "publication_date": "2010-05-01",
+   "type": "article",
+   "cited_by_count": 480,
+   "primary_location": {
+    "source": {
+     "display_name": "Energy Policy"
+    }
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "A. Dubois"
+     }
+    }
+   ],
+   "referenced_works": []
+  }
+ ]
+}

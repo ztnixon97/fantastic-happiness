@@ -1,0 +1,212 @@
+{
+ "name": "smr-data-centers",
+ "question": "Are small modular nuclear reactors economically competitive for powering large AI data centers?",
+ "academic": [
+  {
+   "id": "A1",
+   "doi": "10.1016/j.enpol.2024.114001",
+   "title": "Levelized cost projections for small modular reactors: a systematic review",
+   "authors": [
+    "R. Okafor",
+    "L. Meng",
+    "D. Haldane"
+   ],
+   "published_at": "2024-04-12",
+   "venue": "Energy Policy",
+   "abstract": "We review 42 published cost estimates for small modular reactors (SMRs) and find a median projected levelized cost of electricity of $120 per megawatt hour, with estimates from vendors clustering substantially below those from independent analysts. Estimates that account for first-of-a-kind effects are roughly twice those that do not.",
+   "references": [
+    "A2",
+    "A3",
+    "A5"
+   ],
+   "url": "https://doi.org/10.1016/j.enpol.2024.114001"
+  },
+  {
+   "id": "A2",
+   "doi": "10.1016/j.joule.2021.06.004",
+   "title": "Historical cost escalation in nuclear construction, 1970-2020",
+   "authors": [
+    "S. Petrova",
+    "M. Lindqvist"
+   ],
+   "published_at": "2021-07-01",
+   "venue": "Joule",
+   "abstract": "Using a database of 349 reactor construction projects we show that realized overnight construction costs exceeded initial estimates by a median of 117 percent, and that escalation was persistent across vendors, regulatory regimes and decades.",
+   "references": [
+    "A5"
+   ],
+   "url": "https://doi.org/10.1016/j.joule.2021.06.004"
+  },
+  {
+   "id": "A3",
+   "doi": "10.1016/j.apenergy.2022.119455",
+   "title": "Learning rates and modular construction: evidence from shipyard analogues",
+   "authors": [
+    "K. Tanaka",
+    "P. Ruiz"
+   ],
+   "published_at": "2022-09-15",
+   "venue": "Applied Energy",
+   "abstract": "Factory fabrication has produced learning rates of 8 to 12 percent per doubling in shipbuilding and modular construction. We argue that transferring these rates to reactor manufacturing requires order books an order of magnitude larger than any announced SMR pipeline.",
+   "references": [
+    "A5"
+   ],
+   "url": "https://doi.org/10.1016/j.apenergy.2022.119455"
+  },
+  {
+   "id": "A4",
+   "doi": null,
+   "title": "Data center load growth and firm generation requirements for AI workloads",
+   "authors": [
+    "J. Whitfield",
+    "A. Osei"
+   ],
+   "published_at": "2025-01-30",
+   "venue": "arXiv",
+   "source_type": "academic_preprint",
+   "abstract": "We model hyperscale data center load growth under three AI deployment scenarios and find that firm capacity requirements are met most cheaply by a combination of gas, storage and demand response through 2035 under current reactor cost assumptions.",
+   "references": [
+    "A2"
+   ],
+   "url": "https://arxiv.org/abs/2501.11234"
+  },
+  {
+   "id": "A5",
+   "doi": "10.1016/j.enpol.2010.03.029",
+   "title": "Negative learning in the French nuclear programme",
+   "authors": [
+    "A. Dubois",
+    "H. Keller"
+   ],
+   "published_at": "2010-05-01",
+   "venue": "Energy Policy",
+   "abstract": "Costs in the French standardized reactor programme rose rather than fell with cumulative experience, a pattern we term negative learning and attribute to scale-up, regulatory ratcheting and loss of construction expertise.",
+   "references": [],
+   "url": "https://doi.org/10.1016/j.enpol.2010.03.029"
+  },
+  {
+   "id": "A6",
+   "doi": "10.1016/j.erss.2023.103211",
+   "title": "Why small modular reactor cost estimates are systematically optimistic",
+   "authors": [
+    "N. Farooq",
+    "E. Bright"
+   ],
+   "published_at": "2023-08-02",
+   "venue": "Energy Research & Social Science",
+   "abstract": "Vendor cost estimates for SMRs omit first-of-a-kind engineering, assume construction schedules never achieved in the West, and rely on order volumes that no announced pipeline supports. We find no empirical basis for the claim that modularity will reverse historical cost escalation.",
+   "references": [
+    "A1",
+    "A2",
+    "A5"
+   ],
+   "url": "https://doi.org/10.1016/j.erss.2023.103211"
+  },
+  {
+   "id": "A7",
+   "doi": "10.1234/retracted.2022.9",
+   "title": "Rapid cost declines in factory-built reactor components",
+   "authors": [
+    "V. Sorensen"
+   ],
+   "published_at": "2022-02-11",
+   "venue": "Journal of Energy Manufacturing",
+   "is_retracted": true,
+   "abstract": "We report cost declines of 40 percent per doubling in factory-built reactor components. (Retracted: the underlying cost dataset could not be verified by the publisher.)",
+   "references": [
+    "A3"
+   ],
+   "url": "https://doi.org/10.1234/retracted.2022.9"
+  }
+ ],
+ "web": [
+  {
+   "id": "N1",
+   "url": "https://www.reuters.com/business/energy/nuscale-uamps-terminate-carbon-free-power-project-2023-11-08/",
+   "title": "NuScale and utility group terminate flagship small modular reactor project",
+   "publisher": "Reuters",
+   "published_at": "2023-11-08",
+   "family": "news",
+   "source_type": "original_news_reporting",
+   "snippet": "NuScale Power and UAMPS agreed to terminate the Carbon Free Power Project.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>NuScale and utility group terminate flagship small modular reactor project | Reuters</title>\n<link rel=\"canonical\" href=\"https://www.reuters.com/business/energy/nuscale-uamps-terminate-carbon-free-power-project-2023-11-08/\"/>\n<meta property=\"og:site_name\" content=\"Reuters\"/>\n<meta property=\"article:published_time\" content=\"2023-11-08T16:02:00Z\"/>\n<meta name=\"author\" content=\"Timothy Gardner\"/>\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>NuScale and utility group terminate flagship small modular reactor project</h1><p>WASHINGTON (Reuters) - NuScale Power and the Utah Associated Municipal Power Systems said on Wednesday they had agreed to terminate the Carbon Free Power Project, the flagship small modular reactor plant that was to be built at the Idaho National Laboratory.</p><p>The companies said subscription levels from participating utilities were insufficient to proceed. The target price for power from the plant had risen to about $89 per megawatt hour from $58 per megawatt hour in earlier estimates, an increase the partners attributed to inflation in materials and higher interest rates.</p><p>Analysts said the cancellation was a setback for a technology that developers have promoted as a faster, cheaper route to new nuclear capacity, including for large data centers being built for artificial intelligence workloads.</p><p>NuScale said it would continue to pursue other customers and that its design remained the only small modular reactor design approved by the U.S. Nuclear Regulatory Commission.</p></article>\n<footer>&copy; 2025 Reuters. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "N2",
+   "url": "https://www.localgazette.example/energy/nuscale-project-ends",
+   "title": "NuScale project ends after subscription shortfall",
+   "publisher": "Local Gazette",
+   "published_at": "2023-11-08",
+   "family": "news",
+   "source_type": "secondary_news_reporting",
+   "snippet": "The flagship small modular reactor project has been terminated.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>NuScale project ends after subscription shortfall | Local Gazette</title>\n<link rel=\"canonical\" href=\"https://www.localgazette.example/energy/nuscale-project-ends\"/>\n<meta property=\"og:site_name\" content=\"Local Gazette\"/>\n<meta property=\"article:published_time\" content=\"2023-11-08T18:30:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>NuScale project ends after subscription shortfall</h1><p>WASHINGTON (Reuters) - NuScale Power and the Utah Associated Municipal Power Systems said on Wednesday they had agreed to terminate the Carbon Free Power Project, the flagship small modular reactor plant that was to be built at the Idaho National Laboratory.</p><p>The companies said subscription levels from participating utilities were insufficient to proceed. The target price for power from the plant had risen to about $89 per megawatt hour from $58 per megawatt hour in earlier estimates, an increase the partners attributed to inflation in materials and higher interest rates.</p><p>Analysts said the cancellation was a setback for a technology that developers have promoted as a faster, cheaper route to new nuclear capacity, including for large data centers being built for artificial intelligence workloads.</p><p>NuScale said it would continue to pursue other customers and that its design remained the only small modular reactor design approved by the U.S. Nuclear Regulatory Commission.</p></article>\n<footer>&copy; 2025 Local Gazette. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "N3",
+   "url": "https://www.dailybulletin.example/wire/2023/11/08/nuscale-uamps-terminate",
+   "title": "NuScale and utility group terminate flagship small modular reactor project",
+   "publisher": "Daily Bulletin",
+   "published_at": "2023-11-08",
+   "family": "news",
+   "source_type": "secondary_news_reporting",
+   "snippet": "Reuters reports the Carbon Free Power Project has been cancelled.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>NuScale and utility group terminate flagship small modular reactor project | Daily Bulletin</title>\n<link rel=\"canonical\" href=\"https://www.reuters.com/business/energy/nuscale-uamps-terminate-carbon-free-power-project-2023-11-08/\"/>\n<meta property=\"og:site_name\" content=\"Daily Bulletin\"/>\n<meta property=\"article:published_time\" content=\"2023-11-08T19:05:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>NuScale and utility group terminate flagship small modular reactor project</h1><p>WASHINGTON (Reuters) - NuScale Power and the Utah Associated Municipal Power Systems said on Wednesday they had agreed to terminate the Carbon Free Power Project, the flagship small modular reactor plant that was to be built at the Idaho National Laboratory.</p><p>The companies said subscription levels from participating utilities were insufficient to proceed. The target price for power from the plant had risen to about $89 per megawatt hour from $58 per megawatt hour in earlier estimates, an increase the partners attributed to inflation in materials and higher interest rates.</p><p>Analysts said the cancellation was a setback for a technology that developers have promoted as a faster, cheaper route to new nuclear capacity, including for large data centers being built for artificial intelligence workloads.</p><p>NuScale said it would continue to pursue other customers and that its design remained the only small modular reactor design approved by the U.S. Nuclear Regulatory Commission.</p></article>\n<footer>&copy; 2025 Daily Bulletin. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "N4",
+   "url": "https://apnews.com/article/data-centers-nuclear-power-agreements-9f21",
+   "title": "Tech companies sign nuclear power agreements for AI data centers",
+   "publisher": "AP News",
+   "published_at": "2025-02-19",
+   "family": "news",
+   "source_type": "original_news_reporting",
+   "snippet": "Technology companies signed agreements to buy electricity from planned nuclear projects.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>Tech companies sign nuclear power agreements for AI data centers | AP News</title>\n<link rel=\"canonical\" href=\"https://apnews.com/article/data-centers-nuclear-power-agreements-9f21\"/>\n<meta property=\"og:site_name\" content=\"AP News\"/>\n<meta property=\"article:published_time\" content=\"2025-02-19T11:00:00Z\"/>\n<meta name=\"author\" content=\"Marta Devlin\"/>\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>Tech companies sign nuclear power agreements for AI data centers</h1><p>A group of technology companies has signed a series of agreements to buy electricity from planned nuclear projects, betting that reactors can supply the round-the-clock power that artificial intelligence data centers require.</p><p>The agreements are structured as power purchase commitments rather than construction financing, according to two people involved in the negotiations who were not authorized to discuss them publicly. None of the projects has begun construction, and several depend on reactor designs that regulators have not yet certified.</p><p>Utility analysts cautioned that announced capacity is not the same as delivered capacity. Data center operators have also signed agreements for gas generation and grid upgrades covering the same load, and those contracts are further along.</p><p>See the <a href=\"https://www.nrc.gov/reactors/new-reactors/smr/design-approval-notice.html\">NRC design approval notice</a> and the company's <a href=\"https://www.sec.gov/Archives/edgar/data/1861121/000186112125000012/smr-20250219.htm\">annual report</a>.</p></article>\n<footer>&copy; 2025 AP News. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "N5",
+   "url": "https://www.techsite.example/posts/tech-giants-nuclear-ai",
+   "title": "Tech giants are betting on nuclear for AI",
+   "publisher": "TechSite",
+   "published_at": "2025-02-20",
+   "family": "news",
+   "source_type": "secondary_news_reporting",
+   "snippet": "Tech giants are turning to nuclear power for their AI data centers.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>Tech giants are betting on nuclear for AI | TechSite</title>\n<link rel=\"canonical\" href=\"https://www.techsite.example/posts/tech-giants-nuclear-ai\"/>\n<meta property=\"og:site_name\" content=\"TechSite\"/>\n<meta property=\"article:published_time\" content=\"2025-02-20T09:00:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>Tech giants are betting on nuclear for AI</h1><p>Tech giants are turning to nuclear power for their AI data centers, according to a report published this week.</p><p>The agreements are reportedly structured as power purchase commitments rather than construction financing. None of the projects has begun construction, and several depend on reactor designs regulators have not yet certified, the report said.</p><p>What this means for the industry is still unclear, but the deals signal that data center operators see firm generation as a constraint on AI expansion.</p><p>Read the original reporting at <a href=\"https://apnews.com/article/data-centers-nuclear-power-agreements-9f21\">AP News</a>.</p></article>\n<footer>&copy; 2025 TechSite. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "P1",
+   "url": "https://www.nrc.gov/reactors/new-reactors/smr/design-approval-notice.html",
+   "title": "NRC issues standard design approval for small modular reactor",
+   "publisher": "U.S. NRC",
+   "published_at": "2025-05-29",
+   "family": "web",
+   "source_type": "regulatory_document",
+   "snippet": "The Commission issued a standard design approval.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>NRC issues standard design approval for small modular reactor | U.S. Nuclear Regulatory Commission</title>\n<link rel=\"canonical\" href=\"https://www.nrc.gov/reactors/new-reactors/smr/design-approval-notice.html\"/>\n<meta property=\"og:site_name\" content=\"U.S. Nuclear Regulatory Commission\"/>\n<meta property=\"article:published_time\" content=\"2025-05-29T00:00:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>NRC issues standard design approval for small modular reactor</h1><p>The U.S. Nuclear Regulatory Commission has issued a standard design approval for the 77-megawatt-electric small modular reactor design.</p><p>The approval covers the design only. An applicant seeking to build and operate a plant using this design must still obtain a combined license, which requires site-specific review including environmental and emergency planning analyses.</p><p>The staff's safety evaluation report identifies no unresolved safety questions for the certified scope.</p></article>\n<footer>&copy; 2025 U.S. Nuclear Regulatory Commission. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "P2",
+   "url": "https://www.sec.gov/Archives/edgar/data/1861121/000186112125000012/smr-20250219.htm",
+   "title": "Annual report excerpt: risk factors and project economics",
+   "publisher": "SEC EDGAR",
+   "published_at": "2025-02-19",
+   "family": "web",
+   "source_type": "corporate_filing",
+   "snippet": "Risk factors relating to project economics and customer commitments.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>Annual report excerpt: risk factors and project economics | SEC EDGAR</title>\n<link rel=\"canonical\" href=\"https://www.sec.gov/Archives/edgar/data/1861121/000186112125000012/smr-20250219.htm\"/>\n<meta property=\"og:site_name\" content=\"SEC EDGAR\"/>\n<meta property=\"article:published_time\" content=\"2025-02-19T21:00:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>Annual report excerpt: risk factors and project economics</h1><p>We have not yet completed construction of any commercial plant, and we have generated no revenue from power sales.</p><p>Our estimated cost of electricity for a first-of-a-kind plant is subject to material uncertainty. Estimates assume construction durations, financing costs and supply chain pricing that have not been demonstrated at commercial scale, and prior estimates have been revised upward.</p><p>Customer agreements described in this report are non-binding letters of intent unless expressly stated otherwise. No assurance can be given that any such agreement will result in a binding order.</p></article>\n<footer>&copy; 2025 SEC EDGAR. All rights reserved.</footer></body></html>"
+  },
+  {
+   "id": "P3",
+   "url": "https://www.prnewswire.com/news-releases/reactor-company-announces-data-center-agreement-301.html",
+   "title": "Reactor company announces agreement to power data center campus",
+   "publisher": "PR Newswire",
+   "published_at": "2025-02-18",
+   "family": "web",
+   "source_type": "press_release",
+   "snippet": "The company announced an agreement to supply power to a data center campus.",
+   "html": "<!doctype html><html lang=\"en\"><head>\n<title>Reactor company announces agreement to power data center campus | PR Newswire</title>\n<link rel=\"canonical\" href=\"https://www.prnewswire.com/news-releases/reactor-company-announces-data-center-agreement-301.html\"/>\n<meta property=\"og:site_name\" content=\"PR Newswire\"/>\n<meta property=\"article:published_time\" content=\"2025-02-18T13:00:00Z\"/>\n\n<script>window.analytics = 'ignored';</script>\n</head><body><nav>Home Sections Subscribe</nav>\n<article><h1>Reactor company announces agreement to power data center campus</h1><p>The company today announced a landmark agreement to deliver up to 900 megawatts of carbon-free power to a planned data center campus beginning in the early 2030s.</p><p>The agreement is subject to regulatory approval, final investment decision and completion of site characterization.</p><p>This release contains forward-looking statements. Actual results may differ materially.</p></article>\n<footer>&copy; 2025 PR Newswire. All rights reserved.</footer></body></html>"
+  }
+ ]
+}

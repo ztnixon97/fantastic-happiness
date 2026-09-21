@@ -1,0 +1,50 @@
+# Example configuration. Everything here is optional: with no config file the
+# keyless sources are used and the default budget applies.
+#
+#   research --config research.yaml sources
+
+research:
+  budget:
+    max_depth: 4
+    max_tasks: 30
+    max_searches: 60
+    max_documents: 250
+    max_academic_documents: 100
+    max_news_documents: 100
+    max_citation_depth: 2
+    max_citation_documents: 60
+    max_runtime_minutes: 30
+    max_provider_calls: 400
+    max_failed_source_calls: 50
+
+acquisition:
+  request_timeout_seconds: 20
+  max_response_bytes: 5000000
+  max_text_characters: 400000
+  max_redirects: 5
+  per_host_min_interval_seconds: 0.2
+  # Loopback and private addresses are refused unless this is turned on, which
+  # should only happen for a deliberate local-mirror deployment.
+  allow_private_hosts: false
+
+providers:
+  openalex:
+    enabled: true
+  crossref:
+    enabled: true
+  arxiv:
+    enabled: true
+  semantic_scholar:
+    enabled: true
+  gdelt:
+    enabled: true
+  # Keyed providers are skipped unless their credential is present:
+  #   RESEARCH_BRAVE_API_KEY, RESEARCH_TAVILY_API_KEY, RESEARCH_SERPER_API_KEY
+  brave:
+    enabled: true
+
+# Sent to OpenAlex and Crossref, which grant better rate limits in return.
+# May also be supplied as RESEARCH_CONTACT_EMAIL.
+# contact_email: you@example.org
+
+# database_path: ~/.research/research.sqlite3

@@ -1,0 +1,15 @@
+{
+ "news": {
+  "results": [
+   {
+    "url": "https://www.reuters.com/business/energy/smr-story",
+    "title": "Reactor developer signs data centre agreement",
+    "description": "The developer signed an agreement to supply power.",
+    "page_age": "2025-02-18T13:00:00",
+    "meta_url": {
+     "netloc": "reuters.com"
+    }
+   }
+  ]
+ }
+}

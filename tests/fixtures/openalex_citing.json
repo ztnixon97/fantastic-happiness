@@ -1,0 +1,25 @@
+{
+ "results": [
+  {
+   "id": "https://openalex.org/W333",
+   "doi": "https://doi.org/10.1016/j.erss.2023.103211",
+   "display_name": "Why SMR cost estimates are systematically optimistic",
+   "publication_date": "2023-08-02",
+   "type": "article",
+   "cited_by_count": 15,
+   "primary_location": {
+    "source": {
+     "display_name": "Energy Research & Social Science"
+    }
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "N. Farooq"
+     }
+    }
+   ],
+   "referenced_works": []
+  }
+ ]
+}

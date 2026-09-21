@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+ <entry>
+  <id>http://arxiv.org/abs/2501.11234v2</id>
+  <updated>2025-02-02T10:00:00Z</updated>
+  <published>2025-01-30T09:00:00Z</published>
+  <title>Data center load growth and firm generation requirements</title>
+  <summary>We model hyperscale data center load growth under three scenarios.</summary>
+  <author><name>J. Whitfield</name></author>
+  <author><name>A. Osei</name></author>
+  <arxiv:comment>18 pages, 6 figures</arxiv:comment>
+  <arxiv:doi>10.1016/j.apenergy.2025.12345</arxiv:doi>
+  <link href="http://arxiv.org/abs/2501.11234v2" rel="alternate" type="text/html"/>
+  <link title="pdf" href="http://arxiv.org/pdf/2501.11234v2" rel="related" type="application/pdf"/>
+  <category term="eess.SY" scheme="http://arxiv.org/schemas/atom"/>
+ </entry>
+</feed>

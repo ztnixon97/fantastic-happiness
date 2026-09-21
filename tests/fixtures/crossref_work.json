@@ -1,0 +1,30 @@
+{
+ "status": "ok",
+ "message": {
+  "DOI": "10.1016/j.joule.2021.06.004",
+  "title": [
+   "Historical cost escalation in nuclear construction"
+  ],
+  "container-title": [
+   "Joule"
+  ],
+  "type": "journal-article",
+  "issued": {
+   "date-parts": [
+    [
+     2021,
+     7,
+     1
+    ]
+   ]
+  },
+  "author": [
+   {
+    "given": "S.",
+    "family": "Petrova"
+   }
+  ],
+  "URL": "https://doi.org/10.1016/j.joule.2021.06.004",
+  "reference": []
+ }
+}

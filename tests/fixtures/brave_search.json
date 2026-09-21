@@ -1,0 +1,15 @@
+{
+ "web": {
+  "results": [
+   {
+    "url": "https://www.nrc.gov/reactors/design-approval.html",
+    "title": "NRC issues standard design approval",
+    "description": "The Commission issued a standard design approval.",
+    "page_age": "2025-05-29T00:00:00",
+    "meta_url": {
+     "netloc": "nrc.gov"
+    }
+   }
+  ]
+ }
+}
