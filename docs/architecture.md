@@ -11,7 +11,9 @@ research/
   storage/        SQLite schema, repositories, one store facade
   sources/        provider adapters behind one interface + the registry
   graph/          read-only views: citations, claims, entities, timelines, independence
-  acquisition/    deduplicate -> charge budget -> persist; untrusted-content handling
+  acquisition/    deduplicate -> charge budget -> persist; untrusted-content handling;
+                  local ingestion
+  retrieval/      searching held evidence: lexical, graph, optional vectors, fusion
   operations/     research verbs composed from the layers above
   agents/         the action vocabulary, the worker loop, the planner
   orchestration/  the scheduler and the stopping rules
@@ -73,6 +75,8 @@ Tables, and what each exists to answer:
 | `relationships` | every other graph edge, each with its own provenance |
 | `search_queries`, `source_fetches` | what was asked of providers, and what came back, failures included |
 | `budget_usage` | what has been spent, durably |
+| `documents_fts` | which held documents use these words (FTS5, schema v2) |
+| `document_embeddings` | vectors, when they are enabled at all (schema v2) |
 
 Identifiers are readable and sequential (`evidence:412`, `claim:17`),
 allocated by the store. A person reading a report can type one back into the
@@ -86,6 +90,10 @@ Two implementation notes worth knowing:
 - Citation edges store `''` rather than `NULL` for absent DOIs and external
   ids, because SQLite treats `NULL`s as distinct in a `UNIQUE` constraint,
   which would defeat edge deduplication.
+- The schema carries a version. Opening an older database migrates it and
+  backfills what the new tables need - schema v2 adds the full-text index
+  and backfills it from `documents`, so retrieval works on investigations
+  that were gathered before it existed.
 
 ## Evidence and provenance
 
@@ -413,6 +421,129 @@ The graph view folds copies into the document they copy, for the same reason
 the counting does: drawing a syndicated copy as its own node is the visual
 form of counting it as its own source.
 
+## Retrieval
+
+The brief's rule was that vector search waits for a demonstrated retrieval
+problem. Live running produced one, and it was not the problem embeddings
+solve. Every search in the system meant calling a provider, so an
+investigation could not answer the cheapest question it has - *do I already
+have something about this?* - and a held document could be read back only by
+an identifier someone already knew. Workers re-queried providers for material
+sitting in SQLite, and paid budget for it.
+
+`research/retrieval/` answers that question with three retrievers and a
+fusion step.
+
+**Lexical** is FTS5 with BM25 and a porter stemmer, weighted
+`(title 8, abstract 4, body 1)`: a paper whose *title* is about the subject
+is more on point than one mentioning it in passing, and BM25 alone does not
+know that. The index is maintained by `DocumentRepository`, in the same
+transaction as the row, through `storage/fts.py` - a separate module for a
+layering reason worth stating, since storage must not import retrieval, and
+an earlier version that did produced a circular import. The index can also be
+rebuilt from the documents table, which is what makes it safe to treat as a
+cache rather than as state.
+
+Queries are prose, not a query language. `prepare_query` strips FTS5 syntax
+characters and quotes each term, so a stray quotation mark in a research
+question cannot become a syntax error - or a MATCH clause.
+
+**Graph expansion** is the part a keyword index cannot do. From the top
+lexical hits it walks the investigation's own edges - what a document cites,
+what cites it, what else is attached to the same claim or the same entity,
+what copies it - and every hit carries its reason, so a result says *cited by
+evidence:9* rather than arriving with an unexplained score. In live running
+this is what promoted a paper that never used the query's words into the top
+three.
+
+**Vectors** are off by default and are a third opinion when on. There is no
+vector database: vectors are float32 blobs in the same SQLite file, and
+similarity is computed only over candidates the other retrievers already
+surfaced, which keeps the work proportional to the shortlist rather than to
+the corpus. A corpus bounded by a document budget does not need an index
+server, and adding one would mean a second store that can disagree with the
+first.
+
+**Fusion** is reciprocal rank fusion, weighted per retriever. BM25 scores,
+graph connection weights and cosine similarities are not comparable, and
+normalising them against each other invents a relationship that is not
+there; RRF uses only each retriever's ordering, which is the part all three
+agree is meaningful. `k = 60` is the value from the original paper and is
+left alone until there is evidence for changing it.
+
+Results are collapsed by `independence_key` before they are returned, and the
+original is preferred over a copy as the representative - the same rule the
+report and the graph already apply, for the same reason. The copies are named
+on the result that stands for them, so nothing is hidden.
+
+The whole thing is reachable as `research find`, and as the `search_corpus`
+action. Putting it in the vocabulary is the point: a worker that can look
+inside first stops paying a provider for what the investigation already
+owns.
+
+## Ingestion
+
+`research/acquisition/ingest.py` reads local files and folders in as
+evidence. It is in the acquisition layer, not the action vocabulary, and that
+placement is the design:
+
+**No action opens a path.** Ingestion is something a person runs, naming the
+files; a worker only ever sees the resulting documents, wrapped in the same
+untrusted-content envelope as anything fetched. `tests/unit/test_security.py`
+asserts this structurally - no action parameter names a path, and the action
+runtime's source contains no filesystem call.
+
+**A run reads only what it was given.** The named paths are the roots. A
+symlink pointing out of a root is skipped rather than followed, hidden files
+and directories are skipped, the walk is depth-bounded, files above a size
+limit are refused rather than loaded, and file types are an allowlist decided
+by content first and by extension second.
+
+**Ingested material is not privileged.** It goes through the same pipeline as
+anything retrieved: deduplicated against held documents, charged to the
+document budget, stored with provenance. A paper saved on disk and the same
+paper found through a provider are one source. The absolute path is the
+document's external id, so re-ingesting a folder merges rather than
+duplicating.
+
+**A file's modification time is not a publication date.** It is kept as
+metadata. A document dated by its mtime would sit in a timeline and be
+weighed for recency as if that date meant something.
+
+### Reading PDFs
+
+Most primary records are published as PDFs, so `normalize/pdf.py` extracts
+text from them - and this is where the interesting failure lives.
+
+There are two extractors. `pypdf` is used when installed (`pip install
+research[pdf]`), because it handles the font encodings real documents use.
+Without it, a built-in reader decodes Flate-compressed content streams and
+the text-showing operators, which covers PDFs produced from text; it does
+*not* resolve embedded CMaps, so a document using a CID font comes out as
+noise. pypdf is also stricter about file structure than the format is in
+practice, so a file it refuses falls back to the simpler reader rather than
+being given up on.
+
+That noise is the dangerous case, because it looks like text to everything
+downstream: it would be stored as evidence, indexed, and quoted. So
+extraction is gated on legibility - character classes, space density and the
+proportion of word-shaped tokens - and text that does not read as prose is
+discarded with a warning naming the remedy, rather than passed on as a
+document whose contents are wrong. Where individual characters cannot be
+mapped (a subsetted font putting the ligature in "firmly" at `\x02` is the
+common case) they are dropped and the count travels with the document:
+guessing at the missing letters would put words in a document that does not
+contain them, and excerpts are checked against stored text.
+
+Verified against real files rather than only generated ones: a 29-page arXiv
+paper and a 28-page SEC form both come out legible through the built-in
+reader, the latter with its unmappable characters counted.
+
+Fetching PDFs over HTTP is the same extraction behind the content-type
+allowlist, which now admits `application/pdf`. A PDF is read, never run: it
+can carry JavaScript, embedded files and launch actions, and the reader takes
+bytes out of content streams and ignores every other structure in the file.
+
 ## Export
 
 `research/export/` is a presentation layer beside `research/ui/`: nothing
@@ -443,13 +574,18 @@ edits the canvas, the file stops being ours, which is the right outcome.
 
 ## Deliberate omissions
 
-- **No vector search.** Exact identity, fingerprints and provider relevance
-  have not yet failed. Embeddings arrive when there is a demonstrated
-  retrieval problem that needs them, not before.
+- **Vector search is off, not absent.** It stayed out until lexical retrieval
+  had something it could not do; see *Retrieval* above for what changed and
+  what was built instead. Enabling it is a configuration flag and a
+  credential, and the default remains off.
 - **No credibility scores.** Claim status is an enum plus prose: "supported
   by one preprint and contradicted by two later studies" says something a
   number does not.
 - **Synchronous storage.** The store is local and fast relative to network
   acquisition; an async driver would buy nothing today. The repository
   interface is the seam if that changes.
-- **No UI.** Per the plan, not until the CLI pipeline is good.
+- **No UI.** Per the plan, not until the CLI pipeline is good. (Since built:
+  `research ui`, read-only.)
+- **No OCR.** A scanned PDF is refused with a reason rather than passed
+  through an image pipeline that would add a second kind of extraction
+  error to reason about.

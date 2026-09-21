@@ -88,6 +88,9 @@ class AcquisitionPolicy:
         "text/html",
         "application/xhtml+xml",
         "text/plain",
+        # Papers, filings and regulator notices are published as PDFs. Text
+        # is read out of them; nothing in the file is executed.
+        "application/pdf",
         "application/json",
         "application/xml",
         "text/xml",

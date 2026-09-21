@@ -37,6 +37,12 @@ python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/research graph investigation:1
 .venv/bin/research activity investigation:1
 .venv/bin/research budget investigation:1
+
+# Search what the investigation already holds - no provider call, no budget.
+.venv/bin/research find investigation:1 "cost escalation"
+
+# Read your own files in as evidence: PDF, text, Markdown, HTML, JSON.
+.venv/bin/research ingest investigation:1 ./papers --type paper --family academic
 ```
 
 `investigate` plans the work, runs specialised workers over the bundled
@@ -190,10 +196,14 @@ Adapters  openalex  crossref  arxiv  semantic_scholar  gdelt  brave/tavily/serpe
       |
       v
 Acquisition  normalise -> deduplicate -> charge budget -> persist with provenance
-      |
+      |            ^
+      |            |  ingest  local files and folders: PDF, text, Markdown, HTML
       v
 Store  investigations, tasks, documents, claims, entities, events,
        citations, relationships, search_queries, source_fetches, budget_usage
+      |
+      v
+Retrieval  lexical (BM25) + graph expansion + optional vectors, fused
       |
       v
 Graph / CLI  citation traversal, independence report, activity log, inspection
@@ -238,10 +248,10 @@ ways: by depth, by the task budget, and by refusing objectives that repeat
 work already planned. Without the third, workers recommend each other in
 circles.
 
-Workers act by emitting one JSON action per turn — `search_academic`,
-`follow_citations`, `find_primary_source`, `find_counterevidence`,
-`create_claim`, `link_evidence`, `get_evidence`, `spawn_research_task`,
-`complete_research_task` and the rest. That vocabulary is closed: there is no
+Workers act by emitting one JSON action per turn — `search_corpus`,
+`search_academic`, `follow_citations`, `find_primary_source`,
+`find_counterevidence`, `create_claim`, `link_evidence`, `get_evidence`,
+`spawn_research_task`, `complete_research_task` and the rest. That vocabulary is closed: there is no
 action that runs a command, reads a file, or reaches an address the
 acquisition layer did not sanction. A worker returns identifiers and a
 summary; retrieved text stays in the store.
@@ -336,6 +346,59 @@ through a real YAML serialiser so a title containing `---` cannot end the
 block and spill into the note. The export writes only inside its own folder
 and will not overwrite a note it did not generate without `--force`.
 
+**Searching what it already holds.** Every search above calls a provider. The
+cheapest question an investigation has is the one that does not:
+`research find <investigation> <query>`, and the `search_corpus` action, read
+the store instead. Three retrievers, fused by reciprocal rank fusion:
+
+- **lexical** — SQLite FTS5 with BM25 and a porter stemmer, title and
+  abstract weighted above body text. The index is written in the same
+  transaction as the document, so it cannot drift from the corpus.
+- **graph** — the investigation's own edges: what a document cites, what
+  cites it, what else is attached to the same claim or entity. This is the
+  part a keyword index cannot do, and every result says why it surfaced.
+- **vectors** — off by default. They wait for a retrieval problem lexical
+  search cannot solve; what is in the tree is the seam, not the
+  architecture. There is no vector database: vectors live in the same SQLite
+  file and are compared against the shortlist the other retrievers produced.
+
+```
+$ research find investigation:1 "nuclear construction cost overrun"
+evidence:36  [lexical]       Continuous Improvement and Cost Overrun in Construction…
+evidence:43  [graph+lexical] Nuclear power plant construction costs, 1970-2020
+             why: cited by evidence:9
+```
+
+RRF uses only each retriever's *ordering*: BM25 scores, graph weights and
+cosine similarities are not comparable, and normalising them against each
+other would invent a relationship that is not there. Results respect
+independence like everything else — syndicated copies fold into the result
+for the document they copy, and are named there.
+
+**Reading what you already have.** `research ingest <investigation> <paths…>`
+takes local files and folders in as evidence: PDF, plain text, Markdown, HTML
+and JSON. They go through the same pipeline as anything retrieved — the same
+deduplication, the same provenance, the same untrusted-content envelope — so
+a paper saved on disk and the same paper found through a provider are one
+source, not two.
+
+```
+$ research ingest investigation:1 ~/reading --type paper --family academic
++ evidence:14  Construction cost overruns in small modular reactor programmes
+               /home/me/reading/overruns.pdf
+```
+
+PDFs are read without a dependency, and `pip install research[pdf]` adds
+pypdf for the font encodings the built-in reader cannot map. Which matters,
+because the failure mode is the dangerous one: a CID-encoded PDF read without
+its encoding yields characters in roughly the right quantity and entirely the
+wrong identity, and that noise would be stored as evidence, indexed and
+quoted. So extraction is gated on legibility — text that does not read as
+prose is refused with a warning naming the remedy, rather than stored as a
+document whose contents are wrong. Where characters are dropped, the count
+travels with the document. A file's modification time is not treated as a
+publication date.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -369,6 +432,15 @@ External content is hostile data. The controls are in code, not in prompts:
   environment; a serialised config never contains a secret.
 - HTML is parsed for text and metadata only. Scripts are discarded, not
   interpreted; the one exception is `application/ld+json`, read as data.
+- Filesystem access is narrow, explicit and outside the research loop. No
+  action opens a path: ingestion is something a person runs, naming the
+  files, and a worker only ever sees the resulting documents. A run reads
+  nothing outside the paths it was given — a symlink leaving them is skipped
+  rather than followed — skips hidden files, caps file size, and allowlists
+  types by content rather than by name.
+- A PDF is read, never run. It can carry JavaScript, embedded files and
+  launch actions; the reader takes bytes out of content streams and ignores
+  every other structure in the file.
 
 ## Configuration
 
@@ -398,6 +470,13 @@ acquisition:
   request_timeout_seconds: 20
   max_response_bytes: 5000000
 
+retrieval:
+  # Lexical and graph retrieval are always on. Vectors are opt-in, and only
+  # worth their cost once lexical retrieval is demonstrably failing.
+  embeddings_enabled: false
+  embedding_model: text-embedding-3-small
+  embedding_base_url: https://api.openai.com/v1
+
 providers:
   arxiv:
     enabled: true
@@ -416,7 +495,7 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 551 tests, no network, ~21s
+.venv/bin/python -m pytest          # 641 tests, no network, ~21s
 ```
 
 Providers and models alike are exercised through recorded payloads served by
@@ -428,7 +507,16 @@ citation traversal and its termination, the action vocabulary's role
 restrictions, the worker loop and its failure modes, planner validation,
 bounded recursion, every stopping rule, report traceability, budget
 enforcement, provider outage and partial failure, SSRF and prompt-injection
-defences, resuming an investigation, vault export and its escaping, and the CLI end to end.
+defences, resuming an investigation, vault export and its escaping, corpus
+retrieval and fusion, PDF extraction and its legibility gate, local
+ingestion and the paths it refuses, and the CLI end to end.
+
+PDFs are generated in the suite rather than checked in, which keeps them
+deterministic and lets a test ask for the awkward cases on purpose:
+compressed or not, real text or unmappable two-byte font codes. The
+optional pypdf dependency is exercised both ways - the built-in reader is
+tested with the import forced to fail, so the suite does not quietly stop
+covering it once pypdf is installed.
 
 ## Status
 
@@ -443,6 +531,9 @@ defences, resuming an investigation, vault export and its escaping, and the CLI 
 | 7. Synthesis | done |
 | 8. Investigation UI | done |
 | 9. Public social sources | Bluesky, Mastodon, YouTube; Reddit deliberately omitted |
+| Obsidian export | done |
+| Corpus retrieval (lexical + graph, vectors optional) | done |
+| Local document ingestion, PDF extraction | done |
 
 Reddit is deliberately absent from the social sources: its API requires
 registered OAuth credentials and its terms restrict what may be stored and
@@ -451,5 +542,6 @@ ready for it where an operator has the standing to use it.
 
 What would come next, in order: a sandboxed data-analysis capability with
 explicit inputs and outputs (the one place the non-goals leave room for
-execution), transcript evidence for video, and per-provider adaptive pacing
-rather than one global rate limit.
+execution), transcript evidence for video, OCR for scanned PDFs (the one
+case ingestion currently refuses rather than guesses at), and per-provider
+adaptive pacing rather than one global rate limit.

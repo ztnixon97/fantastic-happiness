@@ -79,12 +79,25 @@ class TestRequestSafety:
             AcquisitionPolicy(per_host_min_interval_seconds=0.0),
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
-                    200, content=b"%PDF-1.4", headers={"content-type": "application/pdf"}
+                    200, content=b"PK\x03\x04", headers={"content-type": "application/zip"}
                 )
             ),
         )
         with pytest.raises(SourceRejected):
-            await client.request("GET", "https://example.com/a.pdf", provider="test")
+            await client.request("GET", "https://example.com/a.zip", provider="test")
+
+    async def test_pdfs_are_allowed_because_records_are_published_as_pdfs(self) -> None:
+        """The allowlist admits PDFs; nothing in one is executed."""
+        client = SafeHttpClient(
+            AcquisitionPolicy(per_host_min_interval_seconds=0.0),
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, content=b"%PDF-1.4", headers={"content-type": "application/pdf"}
+                )
+            ),
+        )
+        response = await client.request("GET", "https://example.com/a.pdf", provider="test")
+        assert response.content.startswith(b"%PDF")
 
     async def test_redirect_chains_are_bounded(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -253,3 +266,54 @@ class TestRetryAfter:
         response = await client.request("GET", "https://example.com/x", provider="test")
         assert response.status_code == 200
         assert slept == [2.0]
+
+
+class TestFilesystemIsolation:
+    """Ingestion reads files. The research loop still cannot."""
+
+    def test_no_action_opens_a_path(self) -> None:
+        from research.agents.actions import ACTIONS
+
+        parameters = {
+            name.lower()
+            for spec in ACTIONS.values()
+            for name in spec.parameters
+        }
+        assert not parameters & {"path", "file", "filename", "directory", "folder"}
+        text = " ".join(
+            f"{spec.name} {spec.description} {' '.join(spec.parameters.values())}"
+            for spec in ACTIONS.values()
+        ).lower()
+        for forbidden in ("local file", "on disk", "file path", "filesystem"):
+            assert forbidden not in text
+
+    def test_the_runtime_has_no_handler_that_reads_the_filesystem(self) -> None:
+        import inspect
+
+        from research.agents import runtime as runtime_module
+
+        source = inspect.getsource(runtime_module)
+        for forbidden in ("open(", "Path(", "read_text", "read_bytes", "os.path"):
+            assert forbidden not in source
+
+    def test_ingestion_stays_inside_the_folder_it_was_given(self, tmp_path) -> None:
+        """A symlink is a path the person did not name."""
+        from research.acquisition.ingest import LocalIngest
+        from research.storage.store import ResearchStore
+
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "private.md").write_text("# Private\n\nNot offered for ingestion.\n")
+        root = tmp_path / "named"
+        root.mkdir()
+        (root / "link.md").symlink_to(outside / "private.md")
+        (root / "escape").symlink_to(outside)
+
+        with ResearchStore.in_memory() as store:
+            investigation = store.investigations.create("q")
+            report = LocalIngest(store, investigation_id=investigation.id).ingest([root])
+
+        assert report.documents == []
+        assert {entry.skipped for entry in report.skipped} == {
+            "symlink points outside the ingested folder"
+        }

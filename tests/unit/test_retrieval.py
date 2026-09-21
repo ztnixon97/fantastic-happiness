@@ -374,3 +374,33 @@ class TestCorpusSearch:
         assert payload["found_by"] == sorted(hits[0].ranks)
         assert payload["independent"] is True
         assert isinstance(payload["score"], float)
+
+
+class TestIndexMigration:
+    def test_a_store_written_before_the_index_existed_is_backfilled(self, tmp_path) -> None:
+        """An empty index is worse than none: it answers every search with nothing."""
+        import sqlite3
+
+        path = tmp_path / "old.sqlite3"
+        with ResearchStore.open(path) as store:
+            investigation = store.investigations.create("q")
+            add_document(
+                store,
+                investigation.id,
+                title="Construction cost overruns",
+                text="Capital costs exceeded the estimates.",
+            )
+            investigation_id = investigation.id
+
+        # What a database written before schema v2 looks like.
+        connection = sqlite3.connect(path)
+        connection.execute("DROP TABLE documents_fts")
+        connection.execute("UPDATE schema_meta SET value = '1' WHERE key = 'schema_version'")
+        connection.commit()
+        connection.close()
+
+        with ResearchStore.open(path) as store:
+            index = LexicalIndex(store.db)
+            assert index.count(investigation_id) == 1
+            hits = index.search("cost overruns", investigation_id=investigation_id)
+            assert len(hits) == 1

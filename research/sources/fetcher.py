@@ -21,6 +21,7 @@ from research.models.common import (
 from research.models.evidence import EvidenceDocument
 from research.models.query import ResearchQuery, SearchHit
 from research.normalize.html import ExtractedPage, extract_page
+from research.normalize.pdf import extract_pdf
 from research.normalize.text import clean_text
 from research.normalize.urls import canonicalize_url
 from research.sources.base import SourceAdapter, SourceCapabilities
@@ -134,6 +135,11 @@ class DirectFetchSource(SourceAdapter):
             document.publisher = publisher_hint
         document.metadata["http_status"] = response.status_code
         document.metadata["content_type"] = response.content_type
+        # What the PDF reader made of the bytes, when it was a PDF: which
+        # extractor ran, how many pages, and anything it could not read.
+        for key, value in page.meta.items():
+            if key.startswith("pdf_"):
+                document.metadata[key] = value
         if response.truncated:
             # Recorded, not hidden: a truncated document must not be quoted as
             # if it were complete.
@@ -146,7 +152,28 @@ class DirectFetchSource(SourceAdapter):
             return extract_page(response.text, max_characters=self.max_text_characters)
         if content_type == "application/json":
             return self._page_from_json(response)
+        if content_type == "application/pdf" or response.content.startswith(b"%PDF"):
+            return self._page_from_pdf(response)
         return ExtractedPage(text=clean_text(response.text)[: self.max_text_characters])
+
+    def _page_from_pdf(self, response: HttpResponse) -> ExtractedPage:
+        """Read a fetched PDF.
+
+        A PDF that yields no legible text comes back empty rather than as
+        noise: the acquisition layer records a fetch that produced nothing,
+        which is true, instead of storing a document nobody can read.
+        """
+        extracted = extract_pdf(response.content)
+        page = ExtractedPage(
+            title=extracted.title,
+            text=clean_text(extracted.text)[: self.max_text_characters],
+            authors=list(extracted.authors),
+        )
+        page.meta["pdf_pages"] = str(extracted.pages)
+        page.meta["pdf_extractor"] = extracted.method
+        if extracted.warnings:
+            page.meta["pdf_warnings"] = "; ".join(extracted.warnings)
+        return page
 
     def _page_from_json(self, response: HttpResponse) -> ExtractedPage:
         """Render a JSON body as readable text.

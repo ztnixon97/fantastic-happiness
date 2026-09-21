@@ -402,6 +402,25 @@ class Database:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+        self._backfill_index()
+
+    def _backfill_index(self) -> None:
+        """Populate the full-text index for a store written before it existed.
+
+        ``CREATE TABLE IF NOT EXISTS`` gives an older database the new table
+        but not its contents, and an empty index is worse than no index: it
+        answers every search with nothing at all. The index is derived from
+        the documents table, so it can simply be built.
+        """
+        with self._lock:
+            has_documents = self._conn.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
+            if not has_documents:
+                return
+            if self._conn.execute("SELECT 1 FROM documents_fts LIMIT 1").fetchone():
+                return
+        from research.storage import fts
+
+        fts.rebuild(self)
 
     def close(self) -> None:
         with self._lock:

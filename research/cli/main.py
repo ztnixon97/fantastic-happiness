@@ -34,7 +34,8 @@ from research.graph.entities import EntityRegistry
 from research.models.claim import ClaimStatus, EvidenceStance
 from research.models.event import DatePrecision
 from research.normalize.html import parse_date
-from research.models.common import SourceFamily
+from research.acquisition.ingest import LocalIngest
+from research.models.common import SourceFamily, SourceType
 from research.models.investigation import InvestigationStatus, StopReason
 from research.normalize.text import truncate
 from research.operations.citation_chase import CitationChase
@@ -52,6 +53,22 @@ FAMILY_CHOICES = {
     "government": SourceFamily.GOVERNMENT,
     "corporate": SourceFamily.CORPORATE,
     "social": SourceFamily.SOCIAL,
+}
+
+#: What an ingested file is. Unlike a fetched page, nothing about a local
+#: file says what kind of record it is, so the person ingesting it says.
+TYPE_CHOICES = {
+    "other": SourceType.OTHER,
+    "paper": SourceType.ACADEMIC_PEER_REVIEWED,
+    "preprint": SourceType.ACADEMIC_PREPRINT,
+    "filing": SourceType.CORPORATE_FILING,
+    "government": SourceType.GOVERNMENT_DOCUMENT,
+    "regulatory": SourceType.REGULATORY_DOCUMENT,
+    "statement": SourceType.OFFICIAL_STATEMENT,
+    "press_release": SourceType.PRESS_RELEASE,
+    "news": SourceType.ORIGINAL_NEWS_REPORTING,
+    "transcript": SourceType.TRANSCRIPT,
+    "web_page": SourceType.WEB_PAGE,
 }
 
 
@@ -741,6 +758,55 @@ async def cmd_report(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_ingest(context: CliContext, args: argparse.Namespace) -> int:
+    """Read local files and folders into an investigation as evidence."""
+    context.store.investigations.get(args.investigation)
+    ingest = LocalIngest(
+        context.store,
+        investigation_id=args.investigation,
+        ledger=context.ledger(args.investigation),
+    )
+    report = ingest.ingest(
+        args.paths,
+        source_type=TYPE_CHOICES[args.type],
+        source_family=FAMILY_CHOICES[args.family],
+        recursive=not args.no_recurse,
+        notes=args.note,
+    )
+    if args.json:
+        print(as_json({
+            "summary": report.summary(),
+            "documents": [document.id for document in report.documents],
+            "skipped": [
+                {"path": str(entry.path), "reason": entry.skipped} for entry in report.skipped
+            ],
+        }))
+        return 0
+
+    summary = report.summary()
+    for entry in report.files:
+        if entry.skipped:
+            continue
+        document = entry.document
+        assert document is not None
+        marker = "+" if entry.is_new else "=" 
+        print(f"{marker} {document.id:<12} {truncate(document.title or entry.path.name, 58)}")
+        print(f"               {entry.path}")
+        for warning in entry.warnings:
+            print(f"               ! {warning}")
+    for entry in report.skipped:
+        print(f"- {'skipped':<13} {entry.path}: {entry.skipped}", file=sys.stderr)
+
+    print(
+        f"\n{summary['read']} files read: {summary['new_evidence']} new, "
+        f"{summary['already_held']} already held"
+        + (f"; {summary['skipped']} skipped" if summary["skipped"] else "")
+    )
+    if summary["new_evidence"]:
+        print(f"Search them: research find {args.investigation} <query>")
+    return 0
+
+
 async def cmd_find(context: CliContext, args: argparse.Namespace) -> int:
     """Search evidence the investigation already holds."""
     search = context.corpus_search(
@@ -1059,6 +1125,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="also rank by vector similarity (needs an embedding provider)",
     )
     find.set_defaults(handler=cmd_find)
+
+    ingest = subparsers.add_parser(
+        "ingest", help="read local files and folders into an investigation"
+    )
+    ingest.add_argument("investigation")
+    ingest.add_argument("paths", nargs="+", help="files or folders to read")
+    ingest.add_argument(
+        "--type", choices=sorted(TYPE_CHOICES), default="other",
+        help="what these documents are (default: other)",
+    )
+    ingest.add_argument("--family", choices=sorted(FAMILY_CHOICES), default="web")
+    ingest.add_argument(
+        "--no-recurse", action="store_true", dest="no_recurse",
+        help="read only the files directly named, not folder contents",
+    )
+    ingest.add_argument("--note", help="why this material was added")
+    ingest.add_argument("--json", action="store_true")
+    ingest.set_defaults(handler=cmd_ingest)
 
     index = subparsers.add_parser("index", help="rebuild retrieval indexes")
     index.add_argument("investigation")
