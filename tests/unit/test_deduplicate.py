@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from research.acquisition.deduplicate import DuplicateDetector, independent_documents
+from research.acquisition.deduplicate import DuplicateDetector
+from research.graph.independence import independent_documents
 from research.normalize.document import build_document, detect_wire_service
 from research.acquisition.pipeline import EvidenceAcquirer, summarise
 from research.models.common import (

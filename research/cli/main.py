@@ -16,15 +16,29 @@ import sys
 from typing import Sequence
 
 from research import __version__
-from research.acquisition.deduplicate import independent_documents
+from research.graph.independence import independent_documents
 from research.cli.context import CliContext, build_context, corpus_metadata
-from research.cli.format import as_json, budget_report, document_detail, document_row, table
-from research.errors import NotFound, ResearchError
+from research.cli.format import (
+    as_json,
+    budget_report,
+    claim_detail,
+    document_detail,
+    document_row,
+    table,
+    timeline_report,
+)
+from research.errors import IntegrityError, NotFound, ResearchError
 from research.graph.citations import CitationGraph
+from research.graph.entities import EntityRegistry
+from research.models.claim import ClaimStatus, EvidenceStance
+from research.models.event import DatePrecision
+from research.normalize.html import parse_date
 from research.models.common import SourceFamily
 from research.models.investigation import InvestigationStatus, StopReason
 from research.normalize.text import truncate
 from research.operations.citation_chase import CitationChase
+from research.operations.claims import ClaimOperations
+from research.operations.timeline import TimelineOperations
 from research.operations.search import SearchOperation
 
 FAMILY_CHOICES = {
@@ -414,6 +428,169 @@ async def cmd_demo(context: CliContext, args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_claim_new(context: CliContext, args: argparse.Namespace) -> int:
+    operations = ClaimOperations(context.store, investigation_id=args.investigation)
+    claim = operations.create_claim(args.text, notes=args.note, entity_ids=args.entity or [])
+    print(f"{claim.id}  {claim.text}")
+    print(f"status          {claim.status} (nothing is linked to it yet)")
+    return 0
+
+
+async def cmd_claim_link(context: CliContext, args: argparse.Namespace) -> int:
+    operations = ClaimOperations(context.store, investigation_id=args.investigation)
+    try:
+        result = operations.link_evidence(
+            args.claim,
+            args.document,
+            EvidenceStance.coerce(args.stance, EvidenceStance.SUPPORTS),
+            excerpt=args.excerpt,
+            analysis=args.analysis,
+        )
+    except IntegrityError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    assessment = operations.get_claim(args.claim)
+    print(f"linked {args.document} to {args.claim} as {args.stance}")
+    if result.excerpt_verified:
+        print("  excerpt checked against the document text")
+    if result.not_independent_of:
+        print(
+            f"  note: {args.document} is a copy of {result.not_independent_of}; "
+            "it adds no independent weight"
+        )
+    print(f"  {assessment.status}: {assessment.explanation}")
+    return 0
+
+
+async def cmd_claim_show(context: CliContext, args: argparse.Namespace) -> int:
+    claim = context.store.claims.get(args.claim, hydrate=False)
+    operations = ClaimOperations(context.store, investigation_id=claim.investigation_id)
+    assessment = operations.get_claim(args.claim)
+    if args.json:
+        print(as_json(assessment.to_dict()))
+        return 0
+    print(claim_detail(assessment, links=context.store.claims.evidence_links(args.claim)))
+    return 0
+
+
+async def cmd_claim_list(context: CliContext, args: argparse.Namespace) -> int:
+    operations = ClaimOperations(context.store, investigation_id=args.investigation)
+    status = ClaimStatus.coerce(args.status, None) if args.status else None
+    assessments = [
+        operations.get_claim(claim.id)
+        for claim in operations.list_claims(status=status, limit=args.limit)
+    ]
+    if args.json:
+        print(as_json([assessment.to_dict() for assessment in assessments]))
+        return 0
+    rows = [
+        {
+            "id": assessment.claim_id,
+            "status": str(assessment.status),
+            "support": assessment.support.independent_count,
+            "against": assessment.contradiction.independent_count,
+            "claim": truncate(assessment.text, 58),
+        }
+        for assessment in assessments
+    ]
+    print(table(rows, ["id", "status", "support", "against", "claim"]))
+    return 0
+
+
+async def cmd_questions(context: CliContext, args: argparse.Namespace) -> int:
+    operations = ClaimOperations(context.store, investigation_id=args.investigation)
+    questions = operations.open_questions(limit=args.limit)
+    if args.json:
+        print(as_json(questions))
+        return 0
+    if not questions:
+        print("every claim has evidence with no outstanding gaps")
+        return 0
+    for question in questions:
+        print(f"{question['claim_id']}  [{question['status']}]  {truncate(question['text'], 66)}")
+        print(f"  {question['explanation']}")
+        for gap in question["gaps"]:
+            print(f"  - {gap}")
+        print()
+    return 0
+
+
+async def cmd_entities(context: CliContext, args: argparse.Namespace) -> int:
+    registry = EntityRegistry(context.store, args.investigation)
+    if args.from_documents:
+        registered = 0
+        for document in context.store.documents.list(args.investigation, limit=1000):
+            registered += len(registry.register_document(document))
+        print(f"registered {registered} entity mentions from document metadata")
+    entities = context.store.entities.list(args.investigation, limit=args.limit)
+    rows = [
+        {
+            "id": entity.id,
+            "type": str(entity.entity_type),
+            "name": truncate(entity.name, 40),
+            "identifiers": ", ".join(
+                identifier.key() for identifier in entity.identifiers[:2]
+            ) or "-",
+            "documents": len(registry.documents_for(entity.id)),
+            "review": bool(entity.metadata.get("review_needed")),
+        }
+        for entity in entities
+    ]
+    if args.json:
+        print(as_json(rows))
+        return 0
+    print(table(rows, ["id", "type", "name", "identifiers", "documents", "review"]))
+    flagged = [row for row in rows if row["review"]]
+    if flagged:
+        print()
+        print(
+            f"{len(flagged)} entit{'y' if len(flagged) == 1 else 'ies'} matched on a name "
+            "alone and may conflate different people or organisations"
+        )
+    return 0
+
+
+async def cmd_event(context: CliContext, args: argparse.Namespace) -> int:
+    operations = TimelineOperations(context.store, investigation_id=args.investigation)
+    date_start = parse_date(args.date) if args.date else None
+    if args.date and date_start is None:
+        print(f"could not read the date {args.date!r}; use YYYY-MM-DD", file=sys.stderr)
+        return 1
+    precision = DatePrecision.coerce(
+        args.precision, DatePrecision.DAY if date_start else DatePrecision.UNKNOWN
+    )
+    try:
+        event = operations.record_event(
+            args.description,
+            evidence_ids=args.evidence,
+            date_start=date_start,
+            date_precision=precision,
+            entity_ids=args.entity or [],
+        )
+    except IntegrityError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    print(f"{event.id}  {event.description}")
+    print(f"  {event.date_start.date().isoformat() if event.date_start else 'undated'} "
+          f"({event.date_precision}), evidence: {', '.join(event.evidence_ids)}")
+    return 0
+
+
+async def cmd_timeline(context: CliContext, args: argparse.Namespace) -> int:
+    operations = TimelineOperations(context.store, investigation_id=args.investigation)
+    entries = operations.build_timeline(
+        include_publications=args.publications, limit=args.limit
+    )
+    if args.json:
+        print(as_json([entry.to_dict() for entry in entries]))
+        return 0
+    if not entries:
+        print("no events recorded yet (try --publications for the corpus chronology)")
+        return 0
+    print(timeline_report(entries))
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -509,6 +686,80 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--reason", default="operator_stopped")
     stop.add_argument("--detail")
     stop.set_defaults(handler=cmd_stop)
+
+    claim = subparsers.add_parser("claim", help="state, link and inspect claims")
+    claim_actions = claim.add_subparsers(dest="claim_command", required=True)
+
+    claim_new = claim_actions.add_parser("new", help="state a proposition")
+    claim_new.add_argument("investigation")
+    claim_new.add_argument("text")
+    claim_new.add_argument("--note")
+    claim_new.add_argument("--entity", action="append")
+    claim_new.set_defaults(handler=cmd_claim_new)
+
+    claim_link = claim_actions.add_parser("link", help="attach evidence to a claim")
+    claim_link.add_argument("investigation")
+    claim_link.add_argument("claim")
+    claim_link.add_argument("document")
+    claim_link.add_argument(
+        "--stance", choices=["supports", "contradicts", "qualifies", "mentions"],
+        default="supports",
+    )
+    claim_link.add_argument(
+        "--excerpt", help="verbatim quotation; checked against the document"
+    )
+    claim_link.add_argument("--analysis", help="reasoning about the document (not evidence)")
+    claim_link.set_defaults(handler=cmd_claim_link)
+
+    claim_show = claim_actions.add_parser("show", help="inspect a claim and its evidence")
+    claim_show.add_argument("claim")
+    claim_show.set_defaults(handler=cmd_claim_show)
+
+    claim_list = claim_actions.add_parser("list", help="list claims and their status")
+    claim_list.add_argument("investigation")
+    claim_list.add_argument("--status")
+    claim_list.add_argument("--limit", type=int, default=100)
+    claim_list.set_defaults(handler=cmd_claim_list)
+
+    questions = subparsers.add_parser(
+        "questions", help="claims whose evidence is thin, and what would fix them"
+    )
+    questions.add_argument("investigation")
+    questions.add_argument("--limit", type=int, default=50)
+    questions.set_defaults(handler=cmd_questions)
+
+    entities = subparsers.add_parser("entities", help="the entity registry")
+    entities.add_argument("investigation")
+    entities.add_argument(
+        "--from-documents", action="store_true", dest="from_documents",
+        help="register authors and publishers from document metadata first",
+    )
+    entities.add_argument("--limit", type=int, default=100)
+    entities.set_defaults(handler=cmd_entities)
+
+    event = subparsers.add_parser("event", help="record an evidence-backed event")
+    event.add_argument("investigation")
+    event.add_argument("description")
+    event.add_argument(
+        "--evidence", action="append", required=True,
+        help="document id backing this event (repeatable, at least one)",
+    )
+    event.add_argument("--date", help="YYYY-MM-DD")
+    event.add_argument(
+        "--precision", choices=["exact", "day", "month", "quarter", "year", "unknown"],
+        default=None,
+    )
+    event.add_argument("--entity", action="append")
+    event.set_defaults(handler=cmd_event)
+
+    timeline = subparsers.add_parser("timeline", help="evidence-backed chronology")
+    timeline.add_argument("investigation")
+    timeline.add_argument(
+        "--publications", action="store_true",
+        help="include when each independent source published",
+    )
+    timeline.add_argument("--limit", type=int, default=100)
+    timeline.set_defaults(handler=cmd_timeline)
 
     demo = subparsers.add_parser("demo", help="run the offline worked example")
     demo.set_defaults(handler=cmd_demo)

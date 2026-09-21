@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from research.acquisition.deduplicate import independent_documents
+from research.graph.independence import independent_documents
 from research.config import AcquisitionPolicy, BudgetPolicy, ResearchConfig
 from research.graph.citations import CitationGraph
 from research.models.common import DuplicateRelation, SourceFamily, SourceType

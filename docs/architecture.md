@@ -133,6 +133,80 @@ are kept — that a wire story reached nine outlets is a fact about its spread
 Where the evidence is ambiguous the answer is "not independent", because the
 failure that matters is counting one source several times.
 
+## Claims: status without a score
+
+`graph/claims.py` derives a claim's status from what is attached to it, by
+rules stated in code and checkable by a reader:
+
+| Situation | Status |
+| --- | --- |
+| nothing linked | `unverified` |
+| standing support and standing contradiction | `mixed` |
+| standing contradiction only | `contradicted` |
+| every linked item retracted | `insufficient_evidence` |
+| support is one non-independent cluster of secondary or self-reported material | `insufficient_evidence` |
+| otherwise, support only | `supported` |
+
+"Standing" means not retracted: a withdrawn paper is neither support nor
+rebuttal. Alongside the status comes a sentence — "supported by 1 independent
+primary source, 2025", "supported by 1 independent source (2 documents, 1 of
+them copies or rewrites)" — and a list of gaps that names what would improve
+the assessment. That list is what a follow-up planner reads: not "what is
+unknown" in the abstract, but which propositions are thin and in what way.
+
+`possibly_superseded` is set when the newest contradicting document postdates
+every supporting one. It is the cheapest available check for a finding that
+has been overtaken.
+
+### Two integrity rules
+
+`operations/claims.py` enforces both in code, because both are cases where a
+model's output could otherwise become indistinguishable from retrieved
+material:
+
+* An excerpt must appear in the document it is attributed to. Comparison
+  folds quotation marks, dashes and whitespace — those differences do not make
+  a quotation inauthentic — but wording differences do, and a mismatch is a
+  refusal, not a warning.
+* Reasoning goes in `analysis`, never in `excerpt`. The CLI renders the two
+  under separate headings for the same reason.
+
+## Entity resolution
+
+Deterministic identifiers decide identity. `EntityRegistry.resolve` tries, in
+order: an authoritative identifier match (ORCID, OpenAlex, ROR, Wikidata, SEC
+CIK, DOI, arXiv, PubMed); then a name or alias match among candidates that do
+not *conflict* on an authoritative identifier; then creation.
+
+Three refusals matter more than the matches:
+
+* Two different ORCIDs are two people, whatever the names say.
+* Several plausible candidates and nothing authoritative to choose between
+  them resolves to `AMBIGUOUS` with the candidates attached — the caller
+  decides, nothing is merged.
+* A match made on a weak name ("J. Smith") is recorded on the entity as
+  `review_needed`, so conflation is visible rather than silent.
+
+`register_document` registers only what a provider's structured fields say:
+authors and the publishing venue. An entity found by *reading* the text is a
+model judgement, and belongs to a research worker rather than to deterministic
+code.
+
+## Timelines
+
+An event is an assertion, so it carries the same burden as a claim: at least
+one evidence document, and an explicit `DatePrecision` whenever it is dated.
+`operations/timeline.py` refuses an undocumented event, a dated event with
+unknown precision, an undated event claiming precision, and an event that ends
+before it starts.
+
+Timelines mix two entry kinds. `event` entries are asserted and evidence-backed.
+`publication` entries are derived from the corpus — one per independence group,
+dated by the earliest copy — so a wire story carried by nine outlets is one
+point on the chronology, not nine. `first_appearance` answers "when did this
+story actually break?" by following the independence group rather than the
+document in hand.
+
 ## Source interface
 
 ```python

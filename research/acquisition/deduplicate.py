@@ -22,6 +22,7 @@ from research.models.common import DuplicateRelation, SourceFamily
 from research.models.evidence import EvidenceDocument
 from research.normalize.fingerprint import containment, jaccard, shingles, simhash_bands
 from research.normalize.urls import registrable_domain, url_identity_key
+from research.graph.independence import independent_documents  # noqa: F401  (re-exported)
 from research.storage.repositories import DocumentRepository
 
 #: Identity schemes that name the same record outright.
@@ -286,20 +287,3 @@ def _different_outlet(left: EvidenceDocument, right: EvidenceDocument) -> bool:
     if not left_domain or not right_domain:
         return left.provider != right.provider
     return left_domain != right_domain
-
-
-def independent_documents(
-    documents: DocumentRepository, document_ids: list[str]
-) -> list[list[str]]:
-    """Partition documents into independence groups.
-
-    Each returned group counts as *one* source, whatever its size. This is
-    what report generation must use when it says 'two independent sources'.
-    """
-    groups = documents.independence_groups(document_ids)
-    return [sorted(members, key=_id_sort_key) for _, members in sorted(groups.items())]
-
-
-def _id_sort_key(document_id: str) -> tuple[str, int]:
-    prefix, _, number = document_id.partition(":")
-    return (prefix, int(number) if number.isdigit() else 0)

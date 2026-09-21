@@ -138,3 +138,97 @@ class TestSources:
         parser = build_parser()
         commands = set(parser._subparsers._group_actions[0].choices)  # type: ignore[attr-defined]
         assert not commands & {"run", "exec", "shell", "eval", "python"}
+
+
+class TestClaimsAndGraph:
+    """The Milestone 4 surface: claims, entities, events, timelines."""
+
+    @pytest.fixture
+    def demo_db(self, db, capsys) -> str:
+        assert run(db, "demo") == 0
+        capsys.readouterr()
+        return db
+
+    def test_claim_lifecycle_through_the_cli(self, demo_db, capsys) -> None:
+        assert run(
+            demo_db, "claim", "new", "investigation:1", "SMR costs have risen above projections"
+        ) == 0
+        assert "claim:1" in capsys.readouterr().out
+
+        assert run(
+            demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:8",
+            "--stance", "supports",
+        ) == 0
+        assert "linked evidence:8" in capsys.readouterr().out
+
+        assert run(demo_db, "--json", "claim", "show", "claim:1") == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] in {"supported", "insufficient_evidence"}
+        assert payload["support"]["independent_sources"] == 1
+
+    def test_a_fabricated_excerpt_is_refused_at_the_command_line(self, demo_db, capsys) -> None:
+        run(demo_db, "claim", "new", "investigation:1", "A claim about costs")
+        capsys.readouterr()
+        assert run(
+            demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:8",
+            "--excerpt", "costs have tripled according to leaked documents",
+        ) == 1
+        assert "does not appear" in capsys.readouterr().err
+
+    def test_a_verified_excerpt_is_accepted(self, demo_db, capsys) -> None:
+        run(demo_db, "claim", "new", "investigation:1", "The target price rose")
+        capsys.readouterr()
+        assert run(
+            demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:8",
+            "--excerpt", "The target price for power from the plant had risen",
+        ) == 0
+        assert "excerpt checked" in capsys.readouterr().out
+
+    def test_syndicated_support_is_reported_as_one_source(self, demo_db, capsys) -> None:
+        run(demo_db, "claim", "new", "investigation:1", "The project was terminated")
+        capsys.readouterr()
+        run(demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:8")
+        run(demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:9")
+        output = capsys.readouterr().out
+        assert "adds no independent weight" in output
+
+        assert run(demo_db, "--json", "claim", "show", "claim:1") == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload["support"]["documents"]) == 2
+        assert payload["support"]["independent_sources"] == 1
+
+    def test_open_questions_name_what_is_missing(self, demo_db, capsys) -> None:
+        run(demo_db, "claim", "new", "investigation:1", "The project was terminated")
+        run(demo_db, "claim", "link", "investigation:1", "claim:1", "evidence:8")
+        capsys.readouterr()
+        assert run(demo_db, "--json", "questions", "investigation:1") == 0
+        questions = json.loads(capsys.readouterr().out)
+        assert questions[0]["claim_id"] == "claim:1"
+        assert any("counterevidence" in gap for gap in questions[0]["gaps"])
+
+    def test_entities_are_registered_from_document_metadata(self, demo_db, capsys) -> None:
+        assert run(demo_db, "entities", "investigation:1", "--from-documents") == 0
+        output = capsys.readouterr().out
+        assert "registered" in output
+        assert "person" in output and "organization" in output
+
+    def test_events_require_evidence(self, demo_db, capsys) -> None:
+        assert run(
+            demo_db, "event", "investigation:1", "Something happened",
+            "--evidence", "evidence:8", "--date", "2023-11-08", "--precision", "day",
+        ) == 0
+        assert "event:1" in capsys.readouterr().out
+
+        assert run(
+            demo_db, "event", "investigation:1", "Undated but precise",
+            "--evidence", "evidence:8", "--precision", "day",
+        ) == 1
+        assert "refused" in capsys.readouterr().err
+
+    def test_timeline_collapses_copies_into_one_entry(self, demo_db, capsys) -> None:
+        assert run(demo_db, "--json", "timeline", "investigation:1", "--publications") == 0
+        entries = json.loads(capsys.readouterr().out)
+        assert entries
+        assert all(entry["independent_sources"] == 1 for entry in entries)
+        grouped = [entry for entry in entries if len(entry["evidence"]) > 1]
+        assert grouped, "the syndicated copy shares an entry with its original"

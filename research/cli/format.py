@@ -153,3 +153,70 @@ def budget_report(snapshot: dict[str, dict[str, float]]) -> str:
 
 def _number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
+
+
+def claim_detail(assessment: Any, *, links: Sequence[Any] = ()) -> str:
+    """Render a claim with the evidence behind it, stance by stance."""
+    lines = [
+        f"{assessment.claim_id}  {assessment.text}",
+        "=" * 78,
+        f"status          {assessment.status}",
+        f"assessment      {assessment.explanation}",
+        f"independent     {assessment.support.independent_count} supporting, "
+        f"{assessment.contradiction.independent_count} contradicting",
+    ]
+    if assessment.possibly_superseded:
+        lines.append(
+            "superseded?     contradicting evidence is more recent than the support"
+        )
+    for label, summary in (
+        ("supporting", assessment.support),
+        ("contradicting", assessment.contradiction),
+        ("qualifying", assessment.qualification),
+    ):
+        if not summary.count:
+            continue
+        lines.append("")
+        lines.append(f"-- {label} evidence " + "-" * (58 - len(label)))
+        for group in summary.independent_groups:
+            head, *copies = group
+            suffix = f"  (+{len(copies)} non-independent cop{'y' if len(copies) == 1 else 'ies'}: "
+            suffix += ", ".join(copies) + ")" if copies else ""
+            lines.append(f"  {head}{suffix if copies else ''}")
+    if links:
+        quoted = [link for link in links if link.excerpt]
+        if quoted:
+            lines.append("")
+            lines.append("-- verbatim excerpts " + "-" * 57)
+            for link in quoted[:10]:
+                quote = truncate(link.excerpt, 200)
+                lines.append(f'  [{link.document_id} {link.stance}] "{quote}"')
+        analysed = [link for link in links if link.analysis]
+        if analysed:
+            lines.append("")
+            lines.append("-- analysis (model reasoning, not evidence) " + "-" * 35)
+            for link in analysed[:10]:
+                lines.append(f"  [{link.document_id}] {truncate(link.analysis, 200)}")
+    if assessment.gaps:
+        lines.append("")
+        lines.append("-- what would strengthen this " + "-" * 48)
+        for gap in assessment.gaps:
+            lines.append(f"  - {gap}")
+    return "\n".join(lines)
+
+
+def timeline_report(entries: Sequence[Any]) -> str:
+    rows = []
+    for entry in entries:
+        rows.append(
+            {
+                "date": entry.date.date().isoformat() if entry.date else "undated",
+                "precision": str(entry.precision),
+                "kind": entry.kind,
+                "sources": entry.independent_sources,
+                "primary": entry.has_primary_source,
+                "what": truncate(entry.description, 64),
+                "evidence": ", ".join(entry.evidence_ids[:3]),
+            }
+        )
+    return table(rows, ["date", "precision", "kind", "sources", "primary", "what", "evidence"])

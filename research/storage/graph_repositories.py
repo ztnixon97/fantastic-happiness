@@ -305,6 +305,12 @@ class EntityRepository:
             (entity_id, alias, alias_key, source),
         )
 
+    def update_metadata(self, entity_id: str, metadata: dict[str, Any]) -> None:
+        self.db.execute(
+            "UPDATE entities SET metadata = ?, updated_at = ? WHERE id = ?",
+            (to_json(metadata), encode_dt(utcnow()), entity_id),
+        )
+
     def list(self, investigation_id: str, *, limit: int = 200) -> list[Entity]:
         rows = self.db.query(
             "SELECT * FROM entities WHERE investigation_id = ? "

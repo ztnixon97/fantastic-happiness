@@ -1,10 +1,9 @@
 """Acquisition: retrieval, normalisation, deduplication, persistence."""
 
-from research.acquisition.deduplicate import (
-    DuplicateDetector,
-    DuplicateVerdict,
-    independent_documents,
-)
+from research.acquisition.deduplicate import DuplicateDetector, DuplicateVerdict
+# Counting independent sources lives in research.graph.independence; re-exported
+# here because callers meet the idea first through deduplication.
+from research.graph.independence import independent_documents
 # Document assembly lives in research.normalize (it is pure translation and
 # source adapters depend on it); re-exported here for callers that think of it
 # as part of acquisition.

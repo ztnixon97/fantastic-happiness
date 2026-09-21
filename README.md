@@ -7,11 +7,11 @@ investigations, evidence, claims and provenance, with a constrained set of
 research operations over it. Models supply semantic judgement. Storage,
 identity, deduplication, budgets and provenance are ordinary code.
 
-Milestones 1–3 are implemented: the evidence foundation, the academic
-vertical slice, and the web/news vertical slice, plus a CLI that can gather,
-normalise, persist and inspect a mixed corpus. The planner, claim graph
-APIs, recursive follow-up and synthesis are designed for but not yet built —
-see [Status](#status).
+Milestones 1–4 are implemented: the evidence foundation, the academic and
+web/news vertical slices, and the claim/entity/event graph on top of them,
+plus a CLI that can gather, normalise, persist and inspect a mixed corpus and
+turn it into an argument. The planner, recursive follow-up and synthesis are
+designed for but not yet built — see [Status](#status).
 
 ## Try it
 
@@ -24,6 +24,11 @@ python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/research demo                     # a full investigation, offline
 .venv/bin/research show evidence:9          # where did this come from?
 .venv/bin/research independence investigation:1
+.venv/bin/research claim new investigation:1 "SMR costs have risen above projections"
+.venv/bin/research claim link investigation:1 claim:1 evidence:8 --excerpt "The target price for power"
+.venv/bin/research claim show claim:1
+.venv/bin/research questions investigation:1
+.venv/bin/research timeline investigation:1 --publications
 .venv/bin/research graph investigation:1
 .venv/bin/research activity investigation:1
 .venv/bin/research budget investigation:1
@@ -146,6 +151,43 @@ before it starts, and records which one stopped it. A cited work that has not
 been fetched is stored as an unresolved edge — the frontier is visible
 without spending anything to look at it.
 
+**Claims.** A claim is a proposition; evidence is attached to it with a
+stance, and the status follows from what is attached rather than from what a
+worker believes:
+
+```
+claim:2  Modular factory construction will reverse historical nuclear cost escalation
+status          contradicted
+assessment      supported by 1 independent peer-reviewed source, 2022; contradicted by
+                1 independent peer-reviewed source, 2023 (1 retracted item supporting it;
+                the contradicting evidence is more recent than any supporting evidence)
+
+-- what would strengthen this ------------------------------------------------
+  - all support comes from a single source; look for independent confirmation
+  - no primary record among the supporting evidence; trace the assertion to a
+    filing, dataset, transcript or paper
+```
+
+There is no confidence score. Instead the evidence is characterised: how many
+*independent* sources support it, whether any is a primary record, whether a
+retraction applies, whether the contradicting evidence is newer than the
+support, and whether the only backing is the announcing party's own material.
+`research questions` lists the claims whose evidence is thin and says what
+would fix each one.
+
+Two integrity rules are enforced in code. A quotation attached to a claim must
+actually appear in the document it is attributed to — a fabricated excerpt is
+refused, not flagged. And model reasoning goes in its own field, so a report
+can always separate what a source said from what a model concluded.
+
+**Entities and events.** Identity is decided by authoritative identifiers
+(ORCID, OpenAlex, ROR, Wikidata, SEC CIK) where they exist. Conflicting
+identifiers mean different entities whatever the names say; ambiguous names
+resolve to candidates rather than a merge; a match made on a name like
+"J. Smith" is flagged for review rather than quietly trusted. Events need at
+least one evidence document, and a dated event must state its precision, so a
+timeline never implies certainty it does not have.
+
 **Provenance.** Every document records the provider, the endpoint, the search
 query or fetch that produced it, the document it was reached from, and when.
 Every search and every fetch — including the failures — is a row in the
@@ -219,12 +261,13 @@ export RESEARCH_SEMANTIC_SCHOLAR_API_KEY=...    # optional, raises rate limits
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 224 tests, no network, ~5s
+.venv/bin/python -m pytest          # 335 tests, no network, ~10s
 ```
 
 Providers are exercised through recorded payloads served by a mock
 transport. The suite covers normalisation, URL and DOI handling,
-deduplication and syndication, entity and claim relationships, citation
+deduplication and syndication, claim assessment and excerpt verification,
+entity resolution and its refusals, evidence-backed timelines, citation
 traversal and its termination, budget enforcement, provider outage and
 partial failure, SSRF and prompt-injection defences, resuming an
 investigation, and the CLI end to end.
@@ -236,12 +279,13 @@ investigation, and the CLI end to end.
 | 1. Research state and evidence foundation | done |
 | 2. Academic vertical slice | done |
 | 3. Web/news vertical slice | done |
-| 4. Claims and provenance graph | schema and repositories in place; agent-facing APIs next |
+| 4. Claims and provenance graph | done |
 | 5. Planner and specialised workers | roles, operations and task model defined; not wired to a model yet |
 | 6. Recursive follow-up | budgets, stopping signals and structured follow-ups in place; scheduler next |
 | 7. Synthesis | not started |
 | 8. Investigation UI | deliberately not started |
 | 9. Public social sources | not started; the source interface is ready for them |
 
-The next step is Milestone 4: claim creation and evidence-linking APIs on top
-of the existing tables, which is what turns a corpus into an argument.
+The next step is Milestone 5: a provider-agnostic model interface and the
+specialised research roles — planner, scout, academic, news, primary-source
+and skeptic — driving the operations that already exist.

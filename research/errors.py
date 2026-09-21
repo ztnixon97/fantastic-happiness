@@ -43,6 +43,15 @@ class SourceNotConfigured(SourceError):
     """The provider exists but has no credentials/configuration available."""
 
 
+class IntegrityError(ResearchError):
+    """Raised when a write would corrupt the evidence record.
+
+    The case this exists for: a quotation attached to a claim that does not
+    appear in the document it is attributed to. Analysis must never enter the
+    store as if it were retrieved material.
+    """
+
+
 class UnsafeRequest(ResearchError):
     """Raised when an outbound request violates the acquisition safety policy."""
 
